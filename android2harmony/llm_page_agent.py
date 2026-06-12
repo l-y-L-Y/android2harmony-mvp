@@ -27,6 +27,19 @@ PAGE_SYSTEM = (
     "compilable ArkUI page. Return ONLY the .ets file content - no markdown fences, no prose."
 )
 
+# ArkUI/ArkTS API rules distilled from real hvigor compile failures. Injected into
+# both the page-generation prompt (prevention) and the build-repair prompt (cure).
+ARKUI_RULES = """ArkUI/ArkTS API rules (violating these breaks the hvigor build):
+- Layout: use Blank() for flexible space, NEVER Spacer(). Stack has NO .justifyContent - use Column/Row for justifyContent, or Stack({ alignContent: Alignment.Center }).
+- Text: color is .fontColor(...), never .color(...). Text has NO .verticalAlign, .singleLine, .maxWidth, .includeFontPadding, .autoLink, .fontLinkColor. Use .maxLines(1) for one line, .constraintSize({ maxWidth: 200 }) to cap width, .textAlign(TextAlign.Center) to align.
+- TextInput: set value via constructor `TextInput({ text: this.x, placeholder: '...' })`, never .text(...). It has NO .singleLine/.multiline/.autoLink/.maxLines.
+- Image: .objectFit(ImageFit.Cover|Contain|Fill|Auto|None). backgroundImageSize uses ImageSize.Cover|Contain|Auto (there is NO ImageSize.Stretch).
+- Checkbox: selection is .select(boolean), not .selected. Toggle uses Toggle({ type: ToggleType.Switch, isOn: this.x }).
+- There is NO AutoLink / AutoLinkType in ArkUI.
+- State: EVERY identifier used in build() must be a declared @State/@Prop/local; reference fields as `this.field`. Do not use undeclared names.
+- ArkTS forbids `any` and reading arbitrary properties off `Object`. For list/model rows, declare an `interface` and type arrays as `MyItem[]` (e.g. `@State items: NewsItem[] = [...]`), then access `item.title` on the typed item.
+- @Entry @Component struct must have a `build()` and balanced braces."""
+
 
 def build_page_prompt(
     page_name: str,
@@ -55,6 +68,8 @@ HARD REQUIREMENTS:
 - Unknown click actions: use empty `() => {{}}` with a `// TODO` comment.
 - Self-contained: do not import project files. State fields must use `this.` inside methods.
 - Output the COMPLETE file. Do not stop early or summarize.
+
+{ARKUI_RULES}
 {hints}
 Android {source_kind} source:
 ```{fence}
@@ -115,6 +130,16 @@ def sanitize_page(code: str, page_name: str, available_media: set[str]) -> str:
     m = re.search(r"struct\s+([A-Za-z_][A-Za-z0-9_]*)", code)
     if m and m.group(1) != page_name:
         code = re.sub(rf"\bstruct\s+{re.escape(m.group(1))}\b", f"struct {page_name}", code, count=1)
+    return apply_arkts_fixups(code)
+
+
+def apply_arkts_fixups(code: str) -> str:
+    """Deterministic fixes for unambiguous ArkUI API mistakes that the model repeats.
+    Only safe, context-free substitutions live here; semantic errors go to LLM repair."""
+    # Spacer -> Blank (Spacer does not exist in ArkUI)
+    code = re.sub(r"\bSpacer\s*\(", "Blank(", code)
+    # ImageSize.Stretch -> Cover (Stretch is not a valid ImageSize)
+    code = code.replace("ImageSize.Stretch", "ImageSize.Cover")
     return code
 
 

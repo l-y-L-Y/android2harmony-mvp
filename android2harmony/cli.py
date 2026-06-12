@@ -35,6 +35,10 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--llm-max-pages", type=int, default=0, help="Maximum number of pages to refine with LLM. 0 means no limit.")
     convert.add_argument("--uitrans-index", type=Path, default=Path("rules/uitrans-index.json"), help="Path to indexed UITrans rule summary.")
 
+    repair_build_p = sub.add_parser("repair-build", help="Build with hvigor and LLM-repair ArkTS compile errors until it passes.")
+    repair_build_p.add_argument("project", type=Path)
+    repair_build_p.add_argument("--max-iters", type=int, default=3)
+
     llm = sub.add_parser("llm-check", help="Check the configured LLM provider without storing secrets.")
     llm.add_argument("--prompt", default="Reply with OK and your model name.")
 
@@ -105,6 +109,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Model: {config.model}")
             print(call_llm(args.prompt, max_tokens=256))
             return 0
+
+        if args.command == "repair-build":
+            from .build_repair import repair_build
+            result = repair_build(args.project, args.max_iters, log_sink=lambda m: print(m, flush=True))
+            print(json.dumps({
+                "passed": result.passed,
+                "iterations": result.iterations,
+                "initialErrors": result.initial_error_count,
+                "finalErrors": result.final_error_count,
+                "repairedFiles": result.repaired_files,
+            }, ensure_ascii=False, indent=2))
+            return 0 if result.passed else 1
 
         if args.command == "index-uitrans":
             write_uitrans_rule_index(args.uitrans, args.output)
