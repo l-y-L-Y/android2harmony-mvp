@@ -244,9 +244,10 @@ def _detail_reference_code(pad: str) -> str:
 
 
 def _show_debug_nav(page_name: str, routes: list[str]) -> bool:
-    if page_name in {"ActivityMain", "ActivityDetail"} and "pages/ActivityMain" in routes and "pages/ActivityDetail" in routes:
-        return False
-    return bool(routes)
+    # Debug navigation (route-button list) was the "debug shell" symptom. The rule
+    # translator is now only a fallback when LLM page generation fails, and it must
+    # never inject a debug-nav scaffold.
+    return False
 
 
 def load_android_strings(module_path: Path) -> dict[str, str]:
@@ -268,16 +269,32 @@ def load_android_strings(module_path: Path) -> dict[str, str]:
 def page_to_layout_file(module_path: Path, route: str) -> Path | None:
     page = route.split("/")[-1]
     snake = _camel_to_snake(page)
-    candidates = [
-        module_path / "src" / "main" / "res" / "layout" / f"{snake}.xml",
-        module_path / "src" / "main" / "res" / "layout" / f"activity_{snake}.xml",
-        module_path / "res" / "layout" / f"{snake}.xml",
-        module_path / "res" / "layout" / f"activity_{snake}.xml",
+    layout_dirs = [
+        module_path / "src" / "main" / "res" / "layout",
+        module_path / "res" / "layout",
     ]
+    candidates = []
+    for layout_dir in layout_dirs:
+        candidates += [layout_dir / f"{snake}.xml", layout_dir / f"activity_{snake}.xml"]
     for candidate in candidates:
         if candidate.exists():
             return candidate
+    # Fuzzy fallback: activity class names (e.g. FeedBack, SoftwareLib) often do not map
+    # cleanly to snake_case file names (feedback.xml). Compare on alphanumeric-only keys.
+    target = _normalize_key(page)
+    activity_target = _normalize_key("activity_" + page)
+    for layout_dir in layout_dirs:
+        if not layout_dir.exists():
+            continue
+        for xml in sorted(layout_dir.glob("*.xml")):
+            stem_key = _normalize_key(xml.stem)
+            if stem_key == target or stem_key == activity_target or stem_key == "activity" + target:
+                return xml
     return None
+
+
+def _normalize_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
 def _translate_node(node: ET.Element, strings: dict[str, str], indent: int, context: dict[str, str]) -> str:

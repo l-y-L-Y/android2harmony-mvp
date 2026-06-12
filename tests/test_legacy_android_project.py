@@ -79,8 +79,10 @@ class LegacyAndroidProjectTest(unittest.TestCase):
             index = (output / "entry" / "src" / "main" / "ets" / "pages" / "Index.ets").read_text(encoding="utf-8")
             route_map = (output / "entry" / "src" / "main" / "ets" / "routes" / "RouteMap.ets").read_text(encoding="utf-8")
 
-            self.assertIn("Button('Main')", index)
-            self.assertIn("Button(item.title)", index)
+            # Index enters the primary screen instead of listing debug-nav buttons.
+            self.assertIn("pages/Main", index)
+            self.assertIn("NavigationCompat.replace", index)
+            self.assertNotIn("navRoutes", index)
             self.assertIn("pages/Main", route_map)
             self.assertIn("pages/About", route_map)
             self.assertNotIn("pages/Feedback", route_map)

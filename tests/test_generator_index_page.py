@@ -15,12 +15,13 @@ class GeneratorIndexPageTest(unittest.TestCase):
 
             page = _index_page(project, module, ["pages/Index", "pages/ActivityLists"])
 
-            self.assertIn("Generated HarmonyOS client migration", page)
-            self.assertIn("NavigationCompat.push", page)
-            self.assertIn("App entry", page)
-            self.assertIn("Pages", page)
-            self.assertIn("ActivityLists", page)
-            self.assertIn("Open app", page)
+            # Index is a clean launcher that enters the real first screen, not a
+            # debug-navigation route-button list (the old "debug shell" symptom).
+            self.assertIn("struct Index", page)
+            self.assertIn("NavigationCompat.replace", page)
+            self.assertIn("pages/ActivityLists", page)
+            self.assertNotIn("迁移调试导航", page)
+            self.assertNotIn("navRoutes", page)
 
 
 if __name__ == "__main__":

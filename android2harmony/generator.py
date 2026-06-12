@@ -7,7 +7,8 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .llm_agents import LLMAgentRunner, LLMRefineOptions, enhance_artifact_with_llm, refine_arkui_page_with_llm
+from .llm_agents import LLMAgentCall, LLMAgentRunner, LLMRefineOptions, enhance_artifact_with_llm, refine_arkui_page_with_llm
+from .llm_page_agent import generate_arkui_page
 from .model import AndroidModule, AndroidProject, MigrationIssue, MigrationResult
 from .pipeline import build_agent_pipeline
 from .xml_layout_translator import load_android_strings, page_to_layout_file, translate_layout_file
@@ -96,26 +97,40 @@ def generate_harmony_project(
     write("entry/src/main/ets/state/MigratedStores.ets", _state_stores_ets(project))
     write("entry/src/main/ets/routes/RouteMap.ets", _route_map_ets(pipeline.routes))
     write("entry/src/main/ets/platform/AndroidApiCompat.ets", _android_api_compat_ets(project))
+    app_label = android_strings.get("app_name") or project.name
+    available_media = _available_media_names(project)
     for route in pipeline.routes:
         if route != "pages/Index":
             layout_file = page_to_layout_file(app_module.path, route) if app_module else None
             if layout_file:
                 page_name = route.split("/")[-1]
-                page_code = translate_layout_file(layout_file, page_name, android_strings, pipeline.routes, store_names=store_names)
+                rule_draft = translate_layout_file(layout_file, page_name, android_strings, pipeline.routes, store_names=store_names)
+                page_code = rule_draft
                 if llm_options.enabled and (llm_options.max_pages <= 0 or llm_refined_count < llm_options.max_pages):
+                    layout_xml = layout_file.read_text(encoding="utf-8", errors="ignore")
+                    string_hints = _layout_string_hints(layout_xml, android_strings)
                     try:
-                        refined_page_code = refine_arkui_page_with_llm(
+                        page_code = generate_arkui_page(
                             page_name=page_name,
-                            android_xml=layout_file.read_text(encoding="utf-8", errors="ignore"),
-                            rule_based_ets=page_code,
-                            options=llm_options,
-                            runner=llm_runner if llm_options.all_agents else None,
+                            layout_source=layout_xml,
+                            app_label=app_label,
+                            source_kind="xml",
+                            string_hints=string_hints,
+                            available_media=available_media,
                         )
-                        if refined_page_code != page_code:
-                            llm_refined_count += 1
-                        page_code = refined_page_code
+                        llm_refined_count += 1
+                        llm_runner.records.append(LLMAgentCall(
+                            agent=f"ui-page-agent:{page_name}", status="used", model=llm_runner.model,
+                            reason="llm page generated from layout", prompt_chars=len(layout_xml),
+                            response_chars=len(page_code), prompt="", response="",
+                        ))
                     except Exception as exc:
                         llm_failures.append(f"{route}: {exc}")
+                        llm_runner.records.append(LLMAgentCall(
+                            agent=f"ui-page-agent:{page_name}", status="fallback", model=llm_runner.model,
+                            reason=f"{type(exc).__name__}: {exc}; kept rule-based page", prompt_chars=0,
+                            response_chars=0, prompt="", response="",
+                        ))
                 write(f"entry/src/main/ets/{route}.ets", page_code)
             else:
                 write(f"entry/src/main/ets/{route}.ets", _generated_page_ets(route, project.name, pipeline.routes))
@@ -497,6 +512,15 @@ export class NavigationCompat {
       return;
     }
   }
+
+  static replace(owner: Object, options: router.RouterOptions): void {
+    try {
+      const uiContext = (owner as UiContextOwner).getUIContext();
+      uiContext.getRouter().replaceUrl(options);
+    } catch (err) {
+      return;
+    }
+  }
 }
 """
 
@@ -610,9 +634,13 @@ def _select_app_module(project: AndroidProject) -> AndroidModule | None:
 
 
 def _initial_route(routes: list[str]) -> str:
-    preferred = ["pages/ActivityMain", "pages/MainActivity", "pages/Main", "pages/Index"]
+    preferred = ["pages/ActivityMain", "pages/MainActivity", "pages/Main", "pages/AppStart", "pages/Splash"]
     for route in preferred:
         if route in routes:
+            return route
+    # Otherwise enter the first real screen rather than the Index launcher itself.
+    for route in routes:
+        if route != "pages/Index":
             return route
     return routes[0] if routes else "pages/Index"
 
@@ -690,65 +718,41 @@ def _module_json(module: AndroidModule | None, project_name: str) -> str:
 
 
 def _index_page(project: AndroidProject, module: AndroidModule | None, routes: list[str] | None = None) -> str:
-    nav_routes = [item for item in (routes or []) if item != "pages/Index"][:12]
+    # Clean launcher: enter the real first screen. No debug-nav route list.
+    app_label = project.name
+    if module is not None:
+        app_label = load_android_strings(module.path).get("app_name") or project.name
     primary_route = _initial_route(routes or ["pages/Index"])
-    primary_title = _route_title(primary_route) if primary_route != "pages/Index" else "Open app"
-    nav_import = "import { NavigationCompat } from '../common/NavigationCompat';\n\n" if nav_routes else ""
-    nav_type = "interface NavRoute {\n  title: string;\n  route: string;\n}\n\n" if nav_routes else ""
-    nav_state = f"  @State private navRoutes: NavRoute[] = {json.dumps([{'title': _route_title(item), 'route': item} for item in nav_routes], ensure_ascii=False)};\n" if nav_routes else ""
-    nav_block = (
-        "      Column() {\n"
-        "        Text('App entry')\n"
-        "          .fontSize(16)\n"
-        "          .fontWeight(FontWeight.Medium)\n"
-        "          .margin({ bottom: 8 })\n"
-        f"        Button('{primary_title}')\n"
-        "          .fontSize(14)\n"
-        "          .height(40)\n"
-        "          .width('100%')\n"
-        "          .margin({ bottom: 8 })\n"
-        f"          .onClick(() => {{ NavigationCompat.push(this, {{ url: '{primary_route}' }}); }})\n"
-        "        Text('Pages')\n"
-        "          .fontSize(16)\n"
-        "          .fontWeight(FontWeight.Medium)\n"
-        "          .margin({ top: 8, bottom: 8 })\n"
-        "        ForEach(this.navRoutes, (item: NavRoute) => {\n"
-        "          Button(item.title)\n"
-        "            .fontSize(12)\n"
-        "            .height(32)\n"
-        "            .width('100%')\n"
-        "            .margin({ bottom: 6 })\n"
-        "            .onClick(() => {\n"
-        "              NavigationCompat.push(this, { url: item.route });\n"
-        "            })\n"
-        "        })\n"
-        "      }\n"
-        "      .width('100%')\n"
-        "      .margin({ top: 24 })\n"
-    ) if nav_routes else ""
-    return f"""{nav_import}{nav_type}@Entry
+    has_primary = primary_route != "pages/Index"
+    nav_import = "import { NavigationCompat } from '../common/NavigationCompat';\n\n" if has_primary else ""
+    enter_button = (
+        "      Button('进入')\n"
+        "        .width(160)\n"
+        "        .height(44)\n"
+        "        .margin({ top: 24 })\n"
+        f"        .onClick(() => {{ NavigationCompat.replace(this, {{ url: '{primary_route}' }}); }})\n"
+        if has_primary else ""
+    )
+    auto_enter = (
+        f"  aboutToAppear(): void {{ NavigationCompat.replace(this, {{ url: '{primary_route}' }}); }}\n\n"
+        if has_primary else ""
+    )
+    return f"""{nav_import}@Entry
 @Component
 struct Index {{
-{nav_state}
-  build() {{
+{auto_enter}  build() {{
     Column() {{
-      Text('{project.name}')
+      Text('{_escape(app_label)}')
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
-        .margin({{ bottom: 12 }})
-      Text('Generated HarmonyOS client migration')
-        .fontSize(16)
-        .fontColor('#4B5563')
-      Text('The main client surfaces are listed below.')
-        .fontSize(13)
-        .fontColor('#6B7280')
-        .margin({{ top: 8 }})
-{nav_block}
+        .margin({{ bottom: 8 }})
+{enter_button}
     }}
     .width('100%')
     .height('100%')
     .padding(24)
-    .alignItems(HorizontalAlign.Start)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }}
 }}
 """
@@ -763,32 +767,29 @@ def _route_map_ets(routes: list[str]) -> str:
 
 
 def _generated_page_ets(route: str, project_name: str, routes: list[str] | None = None) -> str:
+    # Clean placeholder for routes with no matching Android layout (e.g. code-built
+    # screens). Never a debug-nav shell; just the page title and a pending note so the
+    # screen is recognizable and the repair/LLM stages can fill it in later.
     title = _arkts_identifier(route.split("/")[-1])
-    nav_routes = [item for item in (routes or []) if item != route][:12]
-    nav_state = f"  @State private navRoutes: NavRoute[] = {json.dumps([{'title': _route_title(item), 'route': item} for item in nav_routes], ensure_ascii=False)};\n" if nav_routes else ""
-    nav_import = "import { NavigationCompat } from '../common/NavigationCompat';\n\n" if nav_routes else ""
-    nav_type = "interface NavRoute {\n  title: string;\n  route: string;\n}\n\n" if nav_routes else ""
-    nav_body = _page_navigation_code("      ") if nav_routes else ""
-    return f"""{nav_import}{nav_type}@Entry
+    display = _route_title(route)
+    return f"""@Entry
 @Component
 struct {title} {{
-{nav_state}
-
   build() {{
     Column() {{
-      Text('{title}')
+      Text('{_escape(display)}')
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
-      Text('Generated from Android layout/source during {project_name} migration')
-        .fontSize(14)
-        .fontColor('#4B5563')
-        .margin({{ top: 8 }})
-{nav_body}
+        .margin({{ bottom: 8 }})
+      Text('此页面在 Android 工程中无对应布局文件，迁移时未能自动还原。')
+        .fontSize(13)
+        .fontColor('#6B7280')
     }}
     .width('100%')
     .height('100%')
     .padding(24)
-    .alignItems(HorizontalAlign.Start)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }}
 }}
 """
@@ -1787,6 +1788,35 @@ def _sanitize_media_filename(name: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9_]", "_", stem)
     stem = re.sub(r"_+", "_", stem).strip("_") or "media"
     return f"{stem}{path.suffix.lower()}"
+
+
+def _available_media_names(project: AndroidProject) -> set[str]:
+    """Media resource names (lowercased stems) that will exist in the generated project,
+    so the LLM page agent only references images that actually resolve at build time."""
+    names = {"foreground", "background", "starticon", "layered_image"}
+    for module in project.modules:
+        for src in module.resource_files:
+            if src.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".svg"}:
+                stem = Path(_sanitize_media_filename(src.name)).stem
+                names.add(stem.lower())
+    return names
+
+
+def _layout_string_hints(layout_xml: str, strings: dict[str, str], limit: int = 60) -> str:
+    """Resolve the @string/* references used in one layout into name->value lines,
+    so the model reproduces the exact original UI text (incl. Chinese) instead of guessing."""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for key in re.findall(r"@string/([A-Za-z0-9_]+)", layout_xml):
+        if key in seen:
+            continue
+        seen.add(key)
+        value = strings.get(key)
+        if value:
+            lines.append(f"{key} = {value}")
+        if len(lines) >= limit:
+            break
+    return "\n".join(lines)
 
 
 def _ensure_template_media(output_dir: Path, copied: list[Path]) -> None:
