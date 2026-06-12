@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Android 转鸿蒙转译控制台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23235f9f'/%3E%3Cpath d='M9 8h14v4H9zM9 15h14v9H9z' fill='white'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-soft: #f9fafb;
+      --line: #d7dde5;
+      --text: #17202a;
+      --muted: #627084;
+      --primary: #235f9f;
+      --primary-dark: #194a80;
+      --accent: #20806a;
+      --warn: #9a5b00;
+      --bad: #b42318;
+      --code-bg: #111827;
+      --code-text: #d8e6f7;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    header {
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .state {
+      min-width: 92px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .state.success {
+      border-color: #9ad3bf;
+      background: #edf8f4;
+      color: var(--accent);
+    }
+
+    .state.error {
+      border-color: #f0aaa4;
+      background: #fff3f2;
+      color: var(--bad);
+    }
+
+    main {
+      width: min(1240px, calc(100vw - 32px));
+      margin: 16px auto;
+      display: grid;
+      grid-template-columns: minmax(330px, 430px) minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    section {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .panel-head {
+      height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .panel-body {
+      padding: 16px;
+    }
+
+    .dropzone {
+      min-height: 188px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 11px;
+      padding: 18px;
+      border: 1px dashed #8fa0b5;
+      border-radius: 8px;
+      background: #fbfcfe;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .dropzone.dragging {
+      border-color: var(--primary);
+      background: #eef6ff;
+    }
+
+    .upload-mark {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--primary);
+      color: #ffffff;
+    }
+
+    .upload-mark svg,
+    button svg {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .hint,
+    .file-name,
+    .path {
+      color: var(--muted);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .options {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    label {
+      font-size: 14px;
+      color: #344054;
+    }
+
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+    }
+
+    input[type="number"] {
+      width: 86px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 10px;
+      background: #ffffff;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      user-select: none;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    button {
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border: 1px solid var(--primary);
+      border-radius: 6px;
+      padding: 0 13px;
+      background: var(--primary);
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      background: var(--primary-dark);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      border-color: #b9c3d1;
+      background: #c7d0dd;
+      color: #ffffff;
+    }
+
+    button.secondary {
+      background: #ffffff;
+      color: var(--primary);
+    }
+
+    button.secondary:hover {
+      background: #eef6ff;
+    }
+
+    .log {
+      min-height: 160px;
+      max-height: 280px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 12px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      min-height: 76px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px;
+      background: var(--surface-soft);
+    }
+
+    .metric strong {
+      display: block;
+      min-height: 27px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .download-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .report {
+      height: 448px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 14px;
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.58;
+    }
+
+    @media (max-width: 900px) {
+      header {
+        padding: 0 14px;
+      }
+
+      main {
+        width: calc(100vw - 24px);
+        grid-template-columns: 1fr;
+        margin: 12px auto;
+      }
+
+      .metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Android 转鸿蒙转译控制台</h1>
+    <div id="state" class="state">空闲</div>
+  </header>
+
+  <main>
+    <section>
+      <div class="panel-head">上传安卓项目压缩包</div>
+      <div class="panel-body">
+        <label id="dropzone" class="dropzone">
+          <input id="fileInput" type="file" accept=".zip,application/zip">
+          <span class="upload-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M12 15V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <strong>选择或拖入 Android 项目 zip</strong>
+          <span id="fileName" class="file-name">支持把 D:\work\Android 下任意安卓项目压缩后上传</span>
+        </label>
+
+        <div class="options">
+          <div class="row">
+            <label class="switch">
+              <input id="llmRefine" type="checkbox">
+              启用 LLM 页面增强
+            </label>
+          </div>
+          <div class="row">
+            <label class="switch">
+              <input id="llmAllAgents" type="checkbox" checked>
+              LLM all agents
+            </label>
+          </div>
+          <div class="row">
+            <label for="llmMaxPages">LLM 最大页面数</label>
+            <input id="llmMaxPages" type="number" min="0" max="50" value="0">
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="convertBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m5 12 4-4v3h6a4 4 0 0 1 0 8h-1M19 12l-4 4v-3H9a4 4 0 0 1 0-8h1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            开始转译
+          </button>
+          <button id="clearBtn" class="secondary" type="button">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 7h16M9 7V5h6v2m-8 0 1 13h8l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            清空
+          </button>
+        </div>
+
+        <div style="height:14px"></div>
+        <div id="log" class="log">等待上传...</div>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel-head">
+        <span>转译结果</span>
+        <div class="download-row">
+          <button id="reportBtn" class="secondary" disabled>下载报告</button>
+          <button id="jsonBtn" class="secondary" disabled>下载 JSON</button>
+          <button id="downloadBtn" class="secondary" disabled>下载鸿蒙工程</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="metrics">
+          <div class="metric"><strong id="projectName">-</strong><span>项目名称</span></div>
+          <div class="metric"><strong id="generatedFiles">0</strong><span>生成文件</span></div>
+          <div class="metric"><strong id="copiedFiles">0</strong><span>复制资源</span></div>
+          <div class="metric"><strong id="issues">0</strong><span>风险项</span></div>
+        </div>
+        <div style="height:12px"></div>
+        <div id="outputDir" class="path">输出目录：</div>
+        <div style="height:12px"></div>
+        <div id="report" class="report">迁移报告会显示在这里。</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const dropzone = document.getElementById('dropzone');
+    const fileName = document.getElementById('fileName');
+    const convertBtn = document.getElementById('convertBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const reportBtn = document.getElementById('reportBtn');
+    const jsonBtn = document.getElementById('jsonBtn');
+    const state = document.getElementById('state');
+    const log = document.getElementById('log');
+    const report = document.getElementById('report');
+
+    const selected = {
+      file: null,
+      downloadUrl: '',
+      reportMdUrl: '',
+      reportJsonUrl: ''
+    };
+
+    function setState(text, className = '') {
+      state.textContent = text;
+      state.className = `state ${className}`;
+    }
+
+    function writeLog(text) {
+      log.textContent = text;
+    }
+
+    function formatBytes(value) {
+      if (value < 1024) return `${value} B`;
+      if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+      return `${(value / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function resetDownloads() {
+      selected.downloadUrl = '';
+      selected.reportMdUrl = '';
+      selected.reportJsonUrl = '';
+      downloadBtn.disabled = true;
+      reportBtn.disabled = true;
+      jsonBtn.disabled = true;
+    }
+
+    function setFile(file) {
+      selected.file = file;
+      resetDownloads();
+      fileName.textContent = file
+        ? `${file.name} (${formatBytes(file.size)})`
+        : '支持把 D:\\work\\Android 下任意安卓项目压缩后上传';
+      convertBtn.disabled = !file;
+    }
+
+    function setMetric(id, value) {
+      document.getElementById(id).textContent = value ?? 0;
+    }
+
+    function openDownload(url) {
+      if (url) window.location.href = url;
+    }
+
+    fileInput.addEventListener('change', () => {
+      setFile(fileInput.files[0] || null);
+    });
+
+    dropzone.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      dropzone.classList.add('dragging');
+    });
+
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('dragging');
+    });
+
+    dropzone.addEventListener('drop', (event) => {
+      event.preventDefault();
+      dropzone.classList.remove('dragging');
+      const file = event.dataTransfer.files[0];
+      if (file) setFile(file);
+    });
+
+    clearBtn.addEventListener('click', () => {
+      fileInput.value = '';
+      setFile(null);
+      setState('空闲');
+      writeLog('等待上传...');
+      report.textContent = '迁移报告会显示在这里。';
+      setMetric('projectName', '-');
+      setMetric('generatedFiles', '0');
+      setMetric('copiedFiles', '0');
+      setMetric('issues', '0');
+      document.getElementById('outputDir').textContent = '输出目录：';
+    });
+
+    convertBtn.addEventListener('click', async () => {
+      if (!selected.file) return;
+
+      const form = new FormData();
+      form.append('archive', selected.file);
+      form.append('llmRefine', document.getElementById('llmRefine').checked ? 'true' : 'false');
+      form.append('llmAllAgents', document.getElementById('llmAllAgents').checked ? 'true' : 'false');
+      form.append('llmMaxPages', document.getElementById('llmMaxPages').value || '0');
+
+      convertBtn.disabled = true;
+      resetDownloads();
+      setState('转译中');
+      writeLog([
+        '上传压缩包...',
+        '安全解压并定位 Android Gradle 项目...',
+        '调用 android2harmony 转译器...',
+        '生成 HarmonyOS 工程、报告和下载包...'
+      ].join('\n'));
+
+      try {
+        const response = await fetch('/api/convert', { method: 'POST', body: form });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || '转译失败');
+        }
+
+        selected.downloadUrl = payload.downloadUrl || '';
+        selected.reportMdUrl = payload.reportMdUrl || '';
+        selected.reportJsonUrl = payload.reportJsonUrl || '';
+
+        setMetric('projectName', payload.projectName || '-');
+        setMetric('generatedFiles', payload.generatedFiles);
+        setMetric('copiedFiles', payload.copiedFiles);
+        setMetric('issues', payload.issues);
+        document.getElementById('outputDir').textContent = `输出目录：${payload.outputDir || ''}`;
+        report.textContent = payload.reportPreview || '没有生成报告预览。';
+        writeLog([
+          '转译完成',
+          `任务：${payload.jobId}`,
+          `Android 根目录：${payload.androidRoot}`,
+          `输出：${payload.outputDir}`
+        ].join('\n'));
+
+        downloadBtn.disabled = !selected.downloadUrl;
+        reportBtn.disabled = !selected.reportMdUrl;
+        jsonBtn.disabled = !selected.reportJsonUrl;
+        setState('完成', 'success');
+      } catch (error) {
+        writeLog(`转译失败\n${error.message}`);
+        setState('失败', 'error');
+      } finally {
+        convertBtn.disabled = !selected.file;
+      }
+    });
+
+    downloadBtn.addEventListener('click', () => openDownload(selected.downloadUrl));
+    reportBtn.addEventListener('click', () => openDownload(selected.reportMdUrl));
+    jsonBtn.addEventListener('click', () => openDownload(selected.reportJsonUrl));
+  </script>
+</body>
+</html>
