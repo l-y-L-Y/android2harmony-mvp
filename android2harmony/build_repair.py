@@ -41,9 +41,12 @@ def run_hvigor_build(
 ) -> tuple[bool, str]:
     env = dict(os.environ)
     env["DEVECO_SDK_HOME"] = str(sdk_home)
+    # PowerShell's call operator handles the spaced "D:\DevEco Studio\..." paths
+    # reliably, where cmd.exe quote-stripping does not.
+    ps = f'& "{hvigorw}" assembleApp --node-home "{node_home}" --no-daemon'
     try:
         proc = subprocess.run(
-            ["cmd", "/c", str(hvigorw), "assembleApp", "--node-home", str(node_home), "--no-daemon"],
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             cwd=str(project_dir), env=env, capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
