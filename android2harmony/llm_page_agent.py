@@ -38,6 +38,8 @@ ARKUI_RULES = """ArkUI/ArkTS API rules (violating these breaks the hvigor build)
 - There is NO AutoLink / AutoLinkType in ArkUI.
 - State: EVERY identifier used in build() must be a declared @State/@Prop/local; reference fields as `this.field`. Do not use undeclared names.
 - ArkTS forbids `any` and reading arbitrary properties off `Object`. For list/model rows, declare an `interface` and type arrays as `MyItem[]` (e.g. `@State items: NewsItem[] = [...]`), then access `item.title` on the typed item.
+- Interfaces: declare each interface name ONCE per file (duplicate names cause arkts-no-decl-merging). Give every interface a unique, specific name.
+- ArkTS has NO optional-by-omission: every object literal must set ALL fields its interface declares. If a field may be absent, mark it optional with `?` in the interface (e.g. `avatar?: string`). Keep every sample object consistent with its interface.
 - @Entry @Component struct must have a `build()` and balanced braces."""
 
 
