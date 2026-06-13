@@ -2,8 +2,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+
+def _load_dotenv() -> None:
+    """Load KEY=value lines from a local .env (cwd or repo root) into the environment,
+    so the LLM token/base-url just work without the user exporting them each time.
+    Existing environment variables win."""
+    candidates = [Path.cwd() / ".env", Path(__file__).resolve().parent.parent / ".env"]
+    for env_path in candidates:
+        if not env_path.exists():
+            continue
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip())
+        break
+
 
 from .analyzer import analyze_project
 from .batch import batch_convert
@@ -100,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _load_dotenv()
     args = build_parser().parse_args(argv)
     try:
         if args.command == "llm-check":
