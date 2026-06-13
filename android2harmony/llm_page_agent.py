@@ -62,6 +62,7 @@ Page struct name (must match EXACTLY): {page_name}
 HARD REQUIREMENTS:
 - Output one complete, compilable ArkTS file: `@Entry @Component struct {page_name} {{ build() {{ ... }} }}`.
 - PRESERVE every visible text string EXACTLY (Chinese stays Chinese, e.g. "检查新版本", "版本：1.0.0"). Never translate or anglicize UI text.
+- Keep the app's ORIGINAL language. When you must invent tab labels, buttons, or sample data not given in the source, write them in the SAME language as the provided string resources / existing text (an English app stays English; a Chinese app stays Chinese). Do not switch languages.
 - Faithfully reproduce the visual layout: orientation, ordering, alignment/gravity, spacing, bold/size emphasis, lists/grids, toolbars, inputs, buttons, images.
 - Use real ArkUI components only: Text, Button, Image, Column, Row, Stack, Flex, List/ListItem, Grid/GridItem, TextInput, Checkbox, Toggle, Scroll, Divider, Tabs.
 - Lists/RecyclerView/GridView: render with `ForEach` over a small local `@State` sample array of realistic items derived from the screen's domain (NOT generic "Sample Item").
