@@ -104,6 +104,7 @@ def generate_harmony_project(
     available_media = _available_media_names(project)
     # (route, page_name, source_kind, source_path)
     llm_jobs: list[tuple[str, str, str, Path]] = []
+    placeholder_pages: list[str] = []  # routes with no Android source to migrate from
     for route in pipeline.routes:
         if route == "pages/Index":
             continue
@@ -115,6 +116,7 @@ def generate_harmony_project(
             source_kind, source_path = "compose", compose_screens[page_name]
         else:
             write(f"entry/src/main/ets/{route}.ets", _generated_page_ets(route, project.name, pipeline.routes))
+            placeholder_pages.append(route)
             continue
         eligible = llm_options.enabled and (llm_options.max_pages <= 0 or len(llm_jobs) < llm_options.max_pages)
         if eligible:
@@ -123,6 +125,7 @@ def generate_harmony_project(
             write(f"entry/src/main/ets/{route}.ets", translate_layout_file(source_path, page_name, android_strings, pipeline.routes, store_names=store_names))
         else:
             write(f"entry/src/main/ets/{route}.ets", _generated_page_ets(route, project.name, pipeline.routes))
+            placeholder_pages.append(route)
 
     def _gen_one(job: tuple[str, str, str, Path]) -> tuple[str, str, str | None, str]:
         route, page_name, source_kind, source_path = job
@@ -188,6 +191,7 @@ def generate_harmony_project(
     for artifact in pipeline.artifacts:
         write(artifact.path, artifact.content)
     write("agent-workspace/03-migration/llm-refinement-report.json", json.dumps({"enabled": llm_options.enabled, "refinedPages": llm_refined_count, "failures": llm_failures}, indent=2, ensure_ascii=False))
+    write("agent-workspace/03-migration/ui-fidelity-report.md", _ui_fidelity_report(project.name, initial_route, pipeline.routes, llm_refined_count, llm_failures, placeholder_pages))
     for index, record in enumerate(llm_runner.records, start=1):
         safe_agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", record.agent).strip("-") or "agent"
         write(
@@ -819,6 +823,46 @@ def _route_map_ets(routes: list[str]) -> str:
 {route_lines}
 ];
 """
+
+
+def _ui_fidelity_report(
+    project_name: str,
+    initial_route: str,
+    routes: list[str],
+    llm_count: int,
+    failures: list[str],
+    placeholders: list[str],
+) -> str:
+    pages = [r for r in routes if r != "pages/Index"]
+    fallback_routes = sorted({f.split(":", 1)[0] for f in failures})
+    lines = [
+        f"# UI 迁移保真报告 - {project_name}",
+        "",
+        f"- 入口屏(EntryAbility 启动页): `{initial_route}`",
+        f"- 页面总数: {len(pages)}",
+        f"- LLM 忠实生成: {llm_count}",
+        f"- 规则兜底(LLM 失败/超时): {len(fallback_routes)}",
+        f"- 占位页(Android 工程中无对应布局/Compose 屏幕): {len(placeholders)}",
+        "",
+    ]
+    if fallback_routes:
+        lines += ["## 规则兜底页(保真度较低,建议人工复核)", *[f"- `{r}`" for r in fallback_routes], ""]
+    if placeholders:
+        lines += [
+            "## 占位页(未能自动还原)",
+            "这些路由来自 manifest/导航但没有可解析的布局或 Compose 屏幕(常见于薄壳 Host Activity、纯代码构建的界面):",
+            *[f"- `{r}`" for r in sorted(placeholders)],
+            "",
+        ]
+    lines += [
+        "## 已知保真限制",
+        "- 网络图片(Glide/Coil/Retrofit 图源)在生成工程中显示为占位图 `app.media.foreground`。",
+        "- 单 Activity + Fragment 宿主:宿主页的动态 fragment 内容按其各自路由单独成页,宿主页本身可能只含骨架/底部导航。",
+        "- 业务逻辑(Kotlin/Java)未做语义级转译,数据为本地 mock。",
+        "- 跨页跳转由模型按页面目录推断接线,复杂导航可能需人工校正。",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _generated_page_ets(route: str, project_name: str, routes: list[str] | None = None) -> str:
