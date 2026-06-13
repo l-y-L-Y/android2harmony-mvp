@@ -154,6 +154,18 @@ def repair_build(
         if log_sink:
             log_sink(msg)
 
+    # Free deterministic pass first: clears the mechanical errors (Spacer, startIcon, ...)
+    # without spending any LLM calls, so the repair loop only tackles real semantic errors.
+    fixed_count = 0
+    for ets in (project_dir / "entry" / "src" / "main" / "ets").rglob("*.ets"):
+        before = ets.read_text(encoding="utf-8", errors="ignore")
+        after = apply_arkts_fixups(before)
+        if after != before:
+            ets.write_text(after, encoding="utf-8")
+            fixed_count += 1
+    if fixed_count:
+        emit(f"[fixups] applied deterministic ArkUI fixes to {fixed_count} files")
+
     for it in range(1, max_iters + 1):
         ok, log = run_hvigor_build(project_dir, hvigorw, node_home, sdk_home)
         errors = parse_build_errors(log)

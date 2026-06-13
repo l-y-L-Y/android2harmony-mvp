@@ -19,7 +19,7 @@ from typing import Callable
 
 from .llm_provider import call_llm, extract_code_block
 
-TEMPLATE_MEDIA = {"foreground", "background", "starticon", "startIcon", "layered_image"}
+TEMPLATE_MEDIA = {"foreground", "background", "layered_image"}
 
 PAGE_SYSTEM = (
     "You are a senior HarmonyOS ArkUI engineer migrating an Android app to HarmonyOS "
@@ -146,6 +146,9 @@ def apply_arkts_fixups(code: str) -> str:
     code = re.sub(r"\bSpacer\s*\(", "Blank(", code)
     # ImageSize.Stretch -> Cover (Stretch is not a valid ImageSize)
     code = code.replace("ImageSize.Stretch", "ImageSize.Cover")
+    # startIcon is the launcher icon, not page content; lowercase 'starticon' also fails
+    # to resolve (real resource is camelCase). Always use the page placeholder instead.
+    code = re.sub(r"\$r\('app\.media\.start[Ii]con'\)", "$r('app.media.foreground')", code)
     return code
 
 
