@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from .knowledge import ARKTS_RULES, attribute_hints_for_errors
 from .llm_page_agent import ARKUI_RULES, apply_arkts_fixups
 from .llm_provider import call_llm, extract_code_block
 
@@ -82,10 +83,14 @@ def _project_media(project_dir: Path) -> set[str]:
 
 def build_repair_prompt(filename: str, content: str, errors: list[str]) -> str:
     error_block = "\n".join(f"- {e}" for e in errors)
+    attr_hints = attribute_hints_for_errors(errors)
+    attr_section = f"\n{attr_hints}\n" if attr_hints else ""
     return f"""Fix the ArkTS/ArkUI compile errors in this single HarmonyOS page file.
 
 {ARKUI_RULES}
 
+{ARKTS_RULES}
+{attr_section}
 Rules for your fix:
 - Change ONLY what is needed to clear the errors below.
 - PRESERVE all visible text exactly (especially Chinese) and keep the same layout/structure.
