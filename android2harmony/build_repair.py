@@ -49,6 +49,7 @@ def run_hvigor_build(
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             cwd=str(project_dir), env=env, capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired as exc:
         return False, f"BUILD TIMEOUT after {timeout}s\n{exc.stdout or ''}"
