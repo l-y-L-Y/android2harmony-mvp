@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -165,18 +166,30 @@ def repair_build(
         if not errors:
             # build failed but no parseable ets errors (config/resource issue)
             return RepairResult(False, it, initial, total, repaired, log[-2000:])
-        for file_path, file_errors in errors.items():
+
+        def _repair(item: tuple[str, list[str]]) -> str:
+            file_path, file_errors = item
             p = Path(file_path)
             if not p.exists() or p.suffix != ".ets":
-                continue
+                return ""
             try:
                 if repair_file(p, file_errors, media, call_fn=call_fn):
-                    repaired.append(p.name)
-                    emit(f"  repaired {p.name} ({len(file_errors)} errors)")
-                else:
-                    emit(f"  skipped {p.name} (invalid LLM output)")
+                    return f"  repaired {p.name} ({len(file_errors)} errors)|{p.name}"
+                return f"  skipped {p.name} (invalid LLM output)"
             except Exception as exc:
-                emit(f"  error repairing {p.name}: {exc}")
+                return f"  error repairing {p.name}: {exc}"
+
+        workers = max(1, int(os.getenv("ANDROID2HARMONY_LLM_CONCURRENCY", "4")))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for line in pool.map(_repair, list(errors.items())):
+                if not line:
+                    continue
+                if "|" in line:
+                    msg, name = line.rsplit("|", 1)
+                    repaired.append(name)
+                    emit(msg)
+                else:
+                    emit(line)
 
     ok, log = run_hvigor_build(project_dir, hvigorw, node_home, sdk_home)
     errors = parse_build_errors(log)
