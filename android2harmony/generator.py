@@ -70,10 +70,11 @@ def generate_harmony_project(
     write("entry/obfuscation-rules.txt", "# Generated placeholder for release obfuscation rules.\n")
     write("entry/build-profile.json5", _entry_build_profile())
     write("entry/src/main/module.json5", _module_json(app_module, project.name))
-    initial_route = _initial_route(pipeline.routes)
+    compose_screens = discover_compose_screens(app_module) if app_module else {}
+    initial_route = _choose_initial_route(pipeline.routes, app_module, compose_screens)
     write("entry/src/main/ets/entryability/EntryAbility.ets", _entry_ability(initial_route))
     write("entry/src/main/ets/entrybackupability/EntryBackupAbility.ets", ENTRY_BACKUP_ABILITY)
-    write("entry/src/main/ets/pages/Index.ets", _index_page(project, app_module, pipeline.routes))
+    write("entry/src/main/ets/pages/Index.ets", _index_page(project, app_module, pipeline.routes, initial_route))
     write("entry/src/main/resources/base/profile/main_pages.json", json.dumps({"src": pipeline.routes}, indent=2))
     write("entry/src/main/resources/base/profile/backup_config.json", json.dumps({"allowToBackupRestore": True}, indent=2))
     write("entry/src/main/resources/base/element/string.json", _strings_json(app_module, project.name))
@@ -101,7 +102,6 @@ def generate_harmony_project(
     write("entry/src/main/ets/platform/AndroidApiCompat.ets", _android_api_compat_ets(project))
     app_label = android_strings.get("app_name") or project.name
     available_media = _available_media_names(project)
-    compose_screens = discover_compose_screens(app_module) if app_module else {}
     # (route, page_name, source_kind, source_path)
     llm_jobs: list[tuple[str, str, str, Path]] = []
     for route in pipeline.routes:
@@ -678,6 +678,27 @@ def _initial_route(routes: list[str]) -> str:
     return routes[0] if routes else "pages/Index"
 
 
+def _choose_initial_route(routes: list[str], module: AndroidModule | None, compose_screens: dict) -> str:
+    """Pick the launch page. Thin host activities (MainActivity that only calls
+    setContent {...}, or a fragment container) have no layout and render as an empty
+    placeholder, so prefer a route that actually has content - the main/home screen."""
+    def has_content(route: str) -> bool:
+        page = route.split("/")[-1]
+        if page in compose_screens:
+            return True
+        return bool(module and page_to_layout_file(module.path, route))
+
+    content = [r for r in routes if r != "pages/Index" and has_content(r)]
+    if not content:
+        return _initial_route(routes)
+    # Prefer a main/home content screen by name.
+    for kw in ["mainscreen", "homescreen", "activitymain", "mainactivity", "home", "main"]:
+        for route in content:
+            if kw in route.split("/")[-1].lower():
+                return route
+    return content[0]
+
+
 def _bundle_name(module: AndroidModule | None, fallback: str) -> str:
     raw = module.application_id or module.namespace if module else None
     if raw and _is_valid_bundle_name(raw):
@@ -750,12 +771,12 @@ def _module_json(module: AndroidModule | None, project_name: str) -> str:
     )
 
 
-def _index_page(project: AndroidProject, module: AndroidModule | None, routes: list[str] | None = None) -> str:
+def _index_page(project: AndroidProject, module: AndroidModule | None, routes: list[str] | None = None, initial_route: str | None = None) -> str:
     # Clean launcher: enter the real first screen. No debug-nav route list.
     app_label = project.name
     if module is not None:
         app_label = load_android_strings(module.path).get("app_name") or project.name
-    primary_route = _initial_route(routes or ["pages/Index"])
+    primary_route = initial_route or _initial_route(routes or ["pages/Index"])
     has_primary = primary_route != "pages/Index"
     nav_import = "import { NavigationCompat } from '../common/NavigationCompat';\n\n" if has_primary else ""
     enter_button = (
