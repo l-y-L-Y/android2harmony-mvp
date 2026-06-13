@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from .compose import compose_screen_source, discover_compose_screens
 from .llm_agents import LLMAgentCall, LLMAgentRunner, LLMRefineOptions, enhance_artifact_with_llm, refine_arkui_page_with_llm
 from .llm_page_agent import generate_arkui_page
 from .model import AndroidModule, AndroidProject, MigrationIssue, MigrationResult
@@ -100,36 +101,48 @@ def generate_harmony_project(
     write("entry/src/main/ets/platform/AndroidApiCompat.ets", _android_api_compat_ets(project))
     app_label = android_strings.get("app_name") or project.name
     available_media = _available_media_names(project)
-    llm_jobs: list[tuple[str, str, Path]] = []  # (route, page_name, layout_file)
+    compose_screens = discover_compose_screens(app_module) if app_module else {}
+    # (route, page_name, source_kind, source_path)
+    llm_jobs: list[tuple[str, str, str, Path]] = []
     for route in pipeline.routes:
         if route == "pages/Index":
             continue
+        page_name = route.split("/")[-1]
         layout_file = page_to_layout_file(app_module.path, route) if app_module else None
-        if not layout_file:
+        if layout_file:
+            source_kind, source_path = "xml", layout_file
+        elif page_name in compose_screens:
+            source_kind, source_path = "compose", compose_screens[page_name]
+        else:
             write(f"entry/src/main/ets/{route}.ets", _generated_page_ets(route, project.name, pipeline.routes))
             continue
-        page_name = route.split("/")[-1]
-        rule_draft = translate_layout_file(layout_file, page_name, android_strings, pipeline.routes, store_names=store_names)
         eligible = llm_options.enabled and (llm_options.max_pages <= 0 or len(llm_jobs) < llm_options.max_pages)
         if eligible:
-            llm_jobs.append((route, page_name, layout_file))
+            llm_jobs.append((route, page_name, source_kind, source_path))
+        elif source_kind == "xml":
+            write(f"entry/src/main/ets/{route}.ets", translate_layout_file(source_path, page_name, android_strings, pipeline.routes, store_names=store_names))
         else:
-            write(f"entry/src/main/ets/{route}.ets", rule_draft)
+            write(f"entry/src/main/ets/{route}.ets", _generated_page_ets(route, project.name, pipeline.routes))
 
-    def _gen_one(job: tuple[str, str, Path]) -> tuple[str, str, str | None, str]:
-        route, page_name, layout_file = job
-        layout_xml = _expand_layout_sources(layout_file)
-        string_hints = _layout_string_hints(layout_xml, android_strings)
+    def _gen_one(job: tuple[str, str, str, Path]) -> tuple[str, str, str | None, str]:
+        route, page_name, source_kind, source_path = job
+        if source_kind == "compose":
+            source = compose_screen_source(source_path)
+            string_hints = ""
+        else:
+            source = _expand_layout_sources(source_path)
+            string_hints = _layout_string_hints(source, android_strings)
         try:
             code = generate_arkui_page(
-                page_name=page_name, layout_source=layout_xml, app_label=app_label,
-                source_kind="xml", string_hints=string_hints, available_media=available_media,
+                page_name=page_name, layout_source=source, app_label=app_label,
+                source_kind=source_kind, string_hints=string_hints, available_media=available_media,
             )
             return route, page_name, code, ""
         except Exception as exc:
             return route, page_name, None, f"{type(exc).__name__}: {exc}"
 
     if llm_jobs:
+        job_kinds = {j[0]: (j[2], j[3]) for j in llm_jobs}
         workers = max(1, int(os.getenv("ANDROID2HARMONY_LLM_CONCURRENCY", "4")))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for route, page_name, code, err in pool.map(_gen_one, llm_jobs):
@@ -138,13 +151,16 @@ def generate_harmony_project(
                     write(f"entry/src/main/ets/{route}.ets", code)
                     llm_runner.records.append(LLMAgentCall(
                         agent=f"ui-page-agent:{page_name}", status="used", model=llm_runner.model,
-                        reason="llm page generated from layout", prompt_chars=0,
+                        reason="llm page generated from source", prompt_chars=0,
                         response_chars=len(code), prompt="", response="",
                     ))
                 else:
                     llm_failures.append(f"{route}: {err}")
-                    layout_file = next(j[2] for j in llm_jobs if j[0] == route)
-                    fallback = translate_layout_file(layout_file, page_name, android_strings, pipeline.routes, store_names=store_names)
+                    source_kind, source_path = job_kinds[route]
+                    if source_kind == "xml":
+                        fallback = translate_layout_file(source_path, page_name, android_strings, pipeline.routes, store_names=store_names)
+                    else:
+                        fallback = _generated_page_ets(route, project.name, pipeline.routes)
                     write(f"entry/src/main/ets/{route}.ets", fallback)
                     llm_runner.records.append(LLMAgentCall(
                         agent=f"ui-page-agent:{page_name}", status="fallback", model=llm_runner.model,

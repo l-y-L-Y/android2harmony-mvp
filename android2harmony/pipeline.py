@@ -280,6 +280,14 @@ def _discover_routes(module: AndroidModule | None) -> list[str]:
             if key not in seen:
                 routes.append(route)
                 seen.add(key)
+    # Compose apps: each screen-level @Composable becomes a page (no XML layout exists).
+    from .compose import discover_compose_screens
+    for screen_name in discover_compose_screens(module):
+        route = f"pages/{screen_name}"
+        key = route.lower()
+        if key not in seen:
+            routes.append(route)
+            seen.add(key)
     return routes
 
 

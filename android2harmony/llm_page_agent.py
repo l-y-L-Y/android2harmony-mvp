@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-from .knowledge import ARKTS_RULES, component_cheatsheet
+from .knowledge import ARKTS_RULES
 from .llm_provider import call_llm, extract_code_block
 
 TEMPLATE_MEDIA = {"foreground", "background", "layered_image"}
@@ -77,8 +77,6 @@ HARD REQUIREMENTS:
 {ARKUI_RULES}
 
 {ARKTS_RULES}
-
-{component_cheatsheet()}
 {hints}
 Android {source_kind} source:
 ```{fence}
