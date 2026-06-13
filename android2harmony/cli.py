@@ -139,6 +139,17 @@ def main(argv: list[str] | None = None) -> int:
                 "finalErrors": result.final_error_count,
                 "repairedFiles": result.repaired_files,
             }, ensure_ascii=False, indent=2))
+            if not result.passed:
+                if result.remaining:
+                    print("\nRemaining errors (re-run repair-build to continue, or fix by hand):", file=sys.stderr)
+                    for path, errs in result.remaining.items():
+                        print(f"  {path}", file=sys.stderr)
+                        for e in errs:
+                            print(f"    - {e}", file=sys.stderr)
+                else:
+                    # non-ArkTS failure (resource/config stage): show the log tail
+                    print("\nBuild failed before ArkTS compilation (resource/config). Log tail:", file=sys.stderr)
+                    print(result.log_tail, file=sys.stderr)
             return 0 if result.passed else 1
 
         if args.command == "index-uitrans":
