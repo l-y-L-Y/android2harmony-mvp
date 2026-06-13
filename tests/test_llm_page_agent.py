@@ -1,8 +1,35 @@
 from android2harmony.llm_page_agent import (
+    apply_arkts_fixups,
     generate_arkui_page,
     sanitize_page,
     validate_page,
 )
+
+
+def test_fixups_cover_known_arkui_mistakes():
+    code = (
+        "Blank()\n"
+        "Spacer()\n"
+        ".backgroundImageSize(ImageSize.Stretch)\n"
+        "Image($r('app.media.startIcon'))\n"
+        "Image($r('app.media.starticon'))\n"
+        ".margin({ start: 8, top: 4 })\n"
+        ".padding({ end: 16 })\n"
+    )
+    out = apply_arkts_fixups(code)
+    assert "Spacer(" not in out
+    assert "ImageSize.Stretch" not in out
+    assert "start[Ii]con" not in out and "startIcon" not in out and "starticon" not in out
+    assert "$r('app.media.foreground')" in out
+    assert "left: 8" in out and "right: 16" in out
+    assert "start:" not in out and "end:" not in out
+
+
+def test_fixups_do_not_touch_legend_or_lengthmetrics():
+    code = ".margin({ start: LengthMetrics.vp(8) })\nconst legend: string = 'x';\n"
+    out = apply_arkts_fixups(code)
+    assert "start: LengthMetrics.vp(8)" in out  # non-numeric start untouched
+    assert "legend: string" in out  # word boundary protects 'legend'
 
 
 def test_validate_accepts_complete_page():

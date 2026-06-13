@@ -34,6 +34,7 @@ ARKUI_RULES = """ArkUI/ArkTS API rules (violating these breaks the hvigor build)
 - Text: color is .fontColor(...), never .color(...). Text has NO .verticalAlign, .singleLine, .maxWidth, .includeFontPadding, .autoLink, .fontLinkColor. Use .maxLines(1) for one line, .constraintSize({ maxWidth: 200 }) to cap width, .textAlign(TextAlign.Center) to align.
 - TextInput: set value via constructor `TextInput({ text: this.x, placeholder: '...' })`, never .text(...). It has NO .singleLine/.multiline/.autoLink/.maxLines.
 - Image: .objectFit(ImageFit.Cover|Contain|Fill|Auto|None). backgroundImageSize uses ImageSize.Cover|Contain|Auto (there is NO ImageSize.Stretch).
+- margin/padding: use numeric left/right/top/bottom (e.g. .margin({ left: 8, top: 4 })). Do NOT use start/end with a number - those RTL keys need LengthMetrics and fail to compile.
 - Checkbox: selection is .select(boolean), not .selected. Toggle uses Toggle({ type: ToggleType.Switch, isOn: this.x }).
 - There is NO AutoLink / AutoLinkType in ArkUI.
 - State: EVERY identifier used in build() must be a declared @State/@Prop/local; reference fields as `this.field`. Do not use undeclared names.
@@ -150,6 +151,10 @@ def apply_arkts_fixups(code: str) -> str:
     # startIcon is the launcher icon, not page content; lowercase 'starticon' also fails
     # to resolve (real resource is camelCase). Always use the page placeholder instead.
     code = re.sub(r"\$r\('app\.media\.start[Ii]con'\)", "$r('app.media.foreground')", code)
+    # margin/padding start:/end: (RTL LocalizedEdges) require LengthMetrics, not a raw
+    # number. left:/right: accept numbers, so retarget numeric directional keys.
+    code = re.sub(r"\bstart:\s*(-?\d)", r"left: \1", code)
+    code = re.sub(r"\bend:\s*(-?\d)", r"right: \1", code)
     return code
 
 
