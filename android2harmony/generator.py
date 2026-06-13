@@ -107,7 +107,7 @@ def generate_harmony_project(
                 rule_draft = translate_layout_file(layout_file, page_name, android_strings, pipeline.routes, store_names=store_names)
                 page_code = rule_draft
                 if llm_options.enabled and (llm_options.max_pages <= 0 or llm_refined_count < llm_options.max_pages):
-                    layout_xml = layout_file.read_text(encoding="utf-8", errors="ignore")
+                    layout_xml = _expand_layout_sources(layout_file)
                     string_hints = _layout_string_hints(layout_xml, android_strings)
                     try:
                         page_code = generate_arkui_page(
@@ -1800,6 +1800,28 @@ def _available_media_names(project: AndroidProject) -> set[str]:
                 stem = Path(_sanitize_media_filename(src.name)).stem
                 names.add(stem.lower())
     return names
+
+
+def _expand_layout_sources(layout_file: Path, max_depth: int = 2) -> str:
+    """Inline the layouts a screen references (`<include>` toolbars, RecyclerView
+    `tools:listitem` item templates) so the model can render list cards and headers
+    faithfully instead of guessing what each row looks like."""
+    seen: set[str] = set()
+    sections: list[str] = []
+
+    def visit(path: Path, depth: int) -> None:
+        if depth > max_depth or path.stem in seen or not path.exists():
+            return
+        seen.add(path.stem)
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        label = path.name if not sections else f"referenced layout: {path.name}"
+        sections.append(f"<!-- {label} -->\n{text}")
+        for ref in re.findall(r"@layout/([A-Za-z0-9_]+)", text):
+            if ref not in seen:
+                visit(path.parent / f"{ref}.xml", depth + 1)
+
+    visit(layout_file, 0)
+    return "\n\n".join(sections)
 
 
 def _layout_string_hints(layout_xml: str, strings: dict[str, str], limit: int = 60) -> str:

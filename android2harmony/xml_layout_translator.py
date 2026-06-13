@@ -269,26 +269,40 @@ def load_android_strings(module_path: Path) -> dict[str, str]:
 def page_to_layout_file(module_path: Path, route: str) -> Path | None:
     page = route.split("/")[-1]
     snake = _camel_to_snake(page)
+    # `MainActivity` <-> `activity_main`: strip the Activity affix to get the base name,
+    # since Android reverses word order between class and layout file conventions.
+    base = re.sub(r"(?i)^activity|activity$", "", page) or page
+    snake_base = _camel_to_snake(base)
     layout_dirs = [
         module_path / "src" / "main" / "res" / "layout",
         module_path / "res" / "layout",
     ]
     candidates = []
     for layout_dir in layout_dirs:
-        candidates += [layout_dir / f"{snake}.xml", layout_dir / f"activity_{snake}.xml"]
+        candidates += [
+            layout_dir / f"{snake}.xml",
+            layout_dir / f"activity_{snake}.xml",
+            layout_dir / f"activity_{snake_base}.xml",
+            layout_dir / f"{snake_base}.xml",
+            layout_dir / f"fragment_{snake_base}.xml",
+        ]
     for candidate in candidates:
         if candidate.exists():
             return candidate
-    # Fuzzy fallback: activity class names (e.g. FeedBack, SoftwareLib) often do not map
-    # cleanly to snake_case file names (feedback.xml). Compare on alphanumeric-only keys.
-    target = _normalize_key(page)
-    activity_target = _normalize_key("activity_" + page)
+    # Fuzzy fallback: compare on alphanumeric-only keys (FeedBack -> feedback.xml,
+    # MainActivity -> activity_main.xml).
+    keys = {
+        _normalize_key(page),
+        _normalize_key("activity_" + page),
+        "activity" + _normalize_key(page),
+        "activity" + _normalize_key(base),
+        _normalize_key(base),
+    }
     for layout_dir in layout_dirs:
         if not layout_dir.exists():
             continue
         for xml in sorted(layout_dir.glob("*.xml")):
-            stem_key = _normalize_key(xml.stem)
-            if stem_key == target or stem_key == activity_target or stem_key == "activity" + target:
+            if _normalize_key(xml.stem) in keys:
                 return xml
     return None
 
