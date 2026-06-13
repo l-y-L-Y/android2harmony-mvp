@@ -136,6 +136,7 @@ def generate_harmony_project(
             code = generate_arkui_page(
                 page_name=page_name, layout_source=source, app_label=app_label,
                 source_kind=source_kind, string_hints=string_hints, available_media=available_media,
+                routes=pipeline.routes,
             )
             return route, page_name, code, ""
         except Exception as exc:

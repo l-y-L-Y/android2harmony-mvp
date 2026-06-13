@@ -45,6 +45,24 @@ ARKUI_RULES = """ArkUI/ArkTS API rules (violating these breaks the hvigor build)
 - @Entry @Component struct must have a `build()` and balanced braces."""
 
 
+def _navigation_section(page_name: str, routes: list[str] | None) -> str:
+    """Give the model the app's page catalog so clickable items/tabs get real
+    router jumps instead of empty TODO handlers."""
+    if not routes:
+        return ""
+    targets = [r.split("/")[-1] for r in routes if r not in ("pages/Index", f"pages/{page_name}")]
+    if not targets:
+        return ""
+    catalog = ", ".join(targets[:40])
+    return (
+        f"- Navigation: the real pages in this app are: {catalog}. For any element that opens another "
+        f"screen (a list/grid item or card, a detail/more button, a bottom-navigation or tab entry), wire a "
+        f"real jump - add `import {{ router }} from '@kit.ArkUI';` and call `router.pushUrl({{ url: 'pages/Target' }})`, "
+        f"choosing the best-matching page name from that list (a list of items -> the matching *Detail/*Fragment page; "
+        f"a tab/nav entry -> the page whose name matches its label). Use `router.back()` for back/up arrows.\n"
+    )
+
+
 def build_page_prompt(
     page_name: str,
     layout_source: str,
@@ -52,10 +70,12 @@ def build_page_prompt(
     source_kind: str = "xml",
     string_hints: str = "",
     available_media: set[str] | None = None,
+    routes: list[str] | None = None,
 ) -> str:
     media_list = ", ".join(sorted(available_media)) if available_media else "foreground, background"
     fence = "xml" if source_kind == "xml" else "kotlin"
     hints = f"\nString resources you may reference (name -> value):\n{string_hints}\n" if string_hints else ""
+    nav_section = _navigation_section(page_name, routes)
     return f"""Migrate this Android {source_kind} screen into a single HarmonyOS ArkUI page.
 
 App: {app_label}
@@ -70,7 +90,7 @@ HARD REQUIREMENTS:
 - Lists/RecyclerView/GridView: render with `ForEach` over a small local `@State` sample array of realistic items derived from the screen's domain (NOT generic "Sample Item").
 - Media: only reference `$r('app.media.NAME')` where NAME is one of: {media_list}. If unsure, omit the image or use `$r('app.media.foreground')`. Never invent other resource names.
 - Do NOT emit any "debug navigation", route-button list, or migration-scaffold UI.
-- Unknown click actions: use empty `() => {{}}` with a `// TODO` comment.
+{nav_section}- Unknown click actions with no matching target page: use empty `() => {{}}` with a `// TODO` comment.
 - Self-contained: do not import project files. State fields must use `this.` inside methods.
 - Output the COMPLETE file. Do not stop early or summarize.
 
@@ -91,12 +111,13 @@ def generate_arkui_page(
     source_kind: str = "xml",
     string_hints: str = "",
     available_media: set[str] | None = None,
+    routes: list[str] | None = None,
     max_tokens: int = 12000,
     call_fn: Callable[[str, str, int], str] | None = None,
 ) -> str:
     """Generate one ArkUI page from an Android screen. Raises RuntimeError on failure."""
     call = call_fn or call_llm
-    prompt = build_page_prompt(page_name, layout_source, app_label, source_kind, string_hints, available_media)
+    prompt = build_page_prompt(page_name, layout_source, app_label, source_kind, string_hints, available_media, routes)
     media = _media_lower(available_media)
 
     last_err = ""

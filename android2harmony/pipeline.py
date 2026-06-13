@@ -256,6 +256,8 @@ def _discover_routes(module: AndroidModule | None) -> list[str]:
         return ["pages/Index"]
     routes = ["pages/Index"]
     seen = {route.lower() for route in routes}
+    from .xml_layout_translator import page_to_layout_file
+    claimed_layouts: set[str] = set()
     if module.manifest and module.manifest.exists():
         for page in _discover_manifest_routes(module.manifest):
             route = f"pages/{page}"
@@ -263,11 +265,17 @@ def _discover_routes(module: AndroidModule | None) -> list[str]:
             if key not in seen:
                 routes.append(route)
                 seen.add(key)
+                claimed = page_to_layout_file(module.path, route)
+                if claimed:
+                    claimed_layouts.add(claimed.stem.lower())
     for layout_dir in [module.path / "src" / "main" / "res" / "layout", module.path / "res" / "layout"]:
         if layout_dir.exists():
-            for layout in sorted(layout_dir.glob("*.xml"))[:24]:
-                page = _page_name(layout.stem)
-                route = f"pages/{page}"
+            for layout in sorted(layout_dir.glob("*.xml")):
+                # Skip reusable sub-components (list rows, headers, dialogs, nav items);
+                # they are not screens. Skip layouts already owned by a manifest activity.
+                if _is_component_layout(layout.stem) or layout.stem.lower() in claimed_layouts:
+                    continue
+                route = f"pages/{_page_name(layout.stem)}"
                 key = route.lower()
                 if key not in seen:
                     routes.append(route)
@@ -335,3 +343,18 @@ def _page_name(value: str) -> str:
     parts = re.split(r"[^A-Za-z0-9]+", value)
     name = "".join(part[:1].upper() + part[1:] for part in parts if part)
     return name or "MigratedPage"
+
+
+_COMPONENT_MARKERS = (
+    "_item", "item_", "listitem", "_header", "_footer", "_row", "_cell", "_chip",
+    "_entry", "dialog", "_section", "nav_", "toolbar_", "floating_", "_menu_item",
+)
+
+
+def _is_component_layout(stem: str) -> bool:
+    """A reusable sub-component layout (list row, header, dialog, nav item) - not a screen.
+    Screens (activity_*/fragment_*/*_fragment) are always kept."""
+    s = stem.lower()
+    if s.startswith("activity_") or s.startswith("fragment_") or s.endswith("_fragment"):
+        return False
+    return any(marker in s for marker in _COMPONENT_MARKERS)

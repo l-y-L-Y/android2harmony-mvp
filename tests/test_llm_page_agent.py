@@ -1,9 +1,25 @@
 from android2harmony.llm_page_agent import (
     apply_arkts_fixups,
+    build_page_prompt,
     generate_arkui_page,
     sanitize_page,
     validate_page,
 )
+
+
+def test_prompt_includes_navigation_catalog():
+    prompt = build_page_prompt(
+        "MainActivity", "<x/>", "App",
+        routes=["pages/Index", "pages/MainActivity", "pages/DetailActivity", "pages/SettingsActivity"],
+    )
+    assert "router.pushUrl" in prompt
+    assert "DetailActivity" in prompt and "SettingsActivity" in prompt
+    assert "MainActivity" not in prompt.split("Navigation:")[1].split("\n")[0]  # current page excluded from catalog
+
+
+def test_prompt_no_navigation_when_alone():
+    prompt = build_page_prompt("Solo", "<x/>", "App", routes=["pages/Index", "pages/Solo"])
+    assert "Navigation: the real pages" not in prompt
 
 
 def test_fixups_cover_known_arkui_mistakes():
