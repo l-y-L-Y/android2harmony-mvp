@@ -75,7 +75,6 @@ def generate_harmony_project(
     write("entry/src/main/ets/entryability/EntryAbility.ets", _entry_ability(initial_route))
     write("entry/src/main/ets/entrybackupability/EntryBackupAbility.ets", ENTRY_BACKUP_ABILITY)
     write("entry/src/main/ets/pages/Index.ets", _index_page(project, app_module, pipeline.routes, initial_route))
-    write("entry/src/main/resources/base/profile/main_pages.json", json.dumps({"src": pipeline.routes}, indent=2))
     write("entry/src/main/resources/base/profile/backup_config.json", json.dumps({"allowToBackupRestore": True}, indent=2))
     write("entry/src/main/resources/base/element/string.json", _strings_json(app_module, project.name))
     write("entry/src/main/resources/base/element/color.json", json.dumps({"color": [{"name": "start_window_background", "value": "#FFFFFF"}]}, indent=2))
@@ -171,6 +170,10 @@ def generate_harmony_project(
                         reason=f"{err}; kept rule-based page", prompt_chars=0,
                         response_chars=0, prompt="", response="",
                     ))
+    # Write the page map only for routes whose .ets actually exists, so one failed page
+    # cannot break the whole build with a "Page does not exist" resource error.
+    existing_routes = [r for r in pipeline.routes if (output_dir / "entry" / "src" / "main" / "ets" / f"{r}.ets").exists()]
+    write("entry/src/main/resources/base/profile/main_pages.json", json.dumps({"src": existing_routes}, indent=2))
     report_md = _report_md(project, issues, output_dir)
     report_json = _report_json(project, issues)
     if llm_options.all_agents:
