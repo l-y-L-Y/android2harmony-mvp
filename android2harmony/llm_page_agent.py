@@ -88,19 +88,21 @@ HARD REQUIREMENTS:
 - Faithfully reproduce the visual layout: orientation, ordering, alignment/gravity, spacing, bold/size emphasis, lists/grids, toolbars, inputs, buttons, images.
 - Use real ArkUI components only: Text, Button, Image, Column, Row, Stack, Flex, List/ListItem, Grid/GridItem, TextInput, Checkbox, Toggle, Scroll, Divider, Tabs.
 - Lists/RecyclerView/GridView: render with `ForEach` over a small local `@State` sample array of realistic items derived from the screen's domain (NOT generic "Sample Item").
+- If the source includes Activity/Fragment CODE, reproduce what it actually shows: real tab titles, the fragments a ViewPager/TabLayout/BottomNavigation hosts, list item shape, and data. Do NOT invent unrelated tabs.
+- Host screens (ViewPager / TabLayout / BottomNavigation + fragments, or a fragment container): show the real content INLINE by importing each hosted screen as a component from its sibling file `./FragmentXxx` and rendering `FragmentXxx()` inside that tab/area. Pick the matching page name from the route list. Never fill a tab with just a label string.
 - Media: only reference `$r('app.media.NAME')` where NAME is one of: {media_list}. If unsure, omit the image or use `$r('app.media.foreground')`. Never invent other resource names.
 - Do NOT emit any "debug navigation", route-button list, or migration-scaffold UI.
 {nav_section}- Unknown click actions with no matching target page: use empty `() => {{}}` with a `// TODO` comment.
-- Self-contained: do not import project files. State fields must use `this.` inside methods.
+- Imports: only system kits (e.g. `@kit.ArkUI`) and sibling page components from `./PageName` (for embedding hosted fragments). Do not import other unknown project files. State fields must use `this.` inside methods.
 - Output the COMPLETE file. Do not stop early or summarize.
 
 {ARKUI_RULES}
 
 {ARKTS_RULES}
 {hints}
-Android {source_kind} source:
+Android {source_kind} source (may include both the XML layout and the screen's Kotlin/Java code):
 ```{fence}
-{layout_source[:16000]}
+{layout_source[:24000]}
 ```"""
 
 
@@ -162,6 +164,8 @@ def sanitize_page(code: str, page_name: str, available_media: set[str]) -> str:
     m = re.search(r"struct\s+([A-Za-z_][A-Za-z0-9_]*)", code)
     if m and m.group(1) != page_name:
         code = re.sub(rf"\bstruct\s+{re.escape(m.group(1))}\b", f"struct {page_name}", code, count=1)
+    # export the struct so a host page (tabs/ViewPager) can import it as a child component
+    code = re.sub(rf"(?<!export )\bstruct\s+{re.escape(page_name)}\b", f"export struct {page_name}", code, count=1)
     return apply_arkts_fixups(code)
 
 

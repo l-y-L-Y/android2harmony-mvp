@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .compose import compose_screen_source, discover_compose_screens
+from .screen_source import find_screen_source
 from .llm_agents import LLMAgentCall, LLMAgentRunner, LLMRefineOptions, enhance_artifact_with_llm, refine_arkui_page_with_llm
 from .llm_page_agent import generate_arkui_page
 from .model import AndroidModule, AndroidProject, MigrationIssue, MigrationResult
@@ -134,6 +135,15 @@ def generate_harmony_project(
         else:
             source = _expand_layout_sources(source_path)
             string_hints = _layout_string_hints(source, android_strings)
+            # The XML is only the skeleton; the Activity/Fragment code carries the real
+            # content (ViewPager fragment lists, adapters, tab titles, click logic).
+            code_src = find_screen_source(app_module, page_name) if app_module else ""
+            if code_src:
+                source += (
+                    "\n\n<!-- Activity/Fragment SOURCE CODE for this screen. The real content, "
+                    "tabs/ViewPager fragments, list data and click behavior live here - reproduce THIS, "
+                    "not just the empty XML container. -->\n```kotlin\n" + code_src + "\n```"
+                )
         try:
             code = generate_arkui_page(
                 page_name=page_name, layout_source=source, app_label=app_label,
