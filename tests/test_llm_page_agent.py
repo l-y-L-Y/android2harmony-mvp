@@ -81,4 +81,20 @@ def test_generate_retries_then_raises_on_bad_output():
         assert False, "expected RuntimeError"
     except RuntimeError as exc:
         assert "Login" in str(exc)
-    assert len(attempts) == 2  # one retry
+    assert len(attempts) == 3  # up to three attempts before giving up
+
+
+def test_generate_retries_after_timeout_then_succeeds():
+    page = "@Entry\n@Component\nstruct Home {\n  build() {\n    Text('首页')\n  }\n}\n"
+    calls = []
+
+    def flaky_call(prompt, system, max_tokens):
+        calls.append(1)
+        if len(calls) == 1:
+            raise TimeoutError("The read operation timed out")
+        return page
+
+    out = generate_arkui_page("Home", "<x/>", "App", call_fn=flaky_call)
+    assert "struct Home" in out
+    assert "首页" in out
+    assert len(calls) == 2  # recovered on the second attempt

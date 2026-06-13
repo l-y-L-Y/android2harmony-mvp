@@ -95,9 +95,13 @@ def generate_arkui_page(
     media = _media_lower(available_media)
 
     last_err = ""
-    for attempt in range(2):
+    for attempt in range(3):
         p = prompt if attempt == 0 else prompt + "\n\nYour previous output was invalid or truncated. Return the COMPLETE valid .ets file only."
-        response = call(p, PAGE_SYSTEM, max_tokens)
+        try:
+            response = call(p, PAGE_SYSTEM, max_tokens)
+        except Exception as exc:  # network/timeout: worth another attempt before falling back
+            last_err = f"{type(exc).__name__}: {exc}"
+            continue
         code = sanitize_page(extract_code_block(response), page_name, media)
         ok, reason = validate_page(code, page_name)
         if ok:
