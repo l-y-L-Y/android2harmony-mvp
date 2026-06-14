@@ -1,0 +1,3 @@
+{"name": "JetpackMVVM", "convertExit": 0, "repairExit": 0, "passed": true, "iterations": 2, "initialErrors": 7, "finalErrors": 0}
+{"name": "WanAndroidGoweii", "convertExit": 0, "repairExit": 1, "passed": false, "iterations": 5, "initialErrors": 377, "finalErrors": 0}
+{"name": "PlayAndroid", "convertExit": 0, "repairExit": 0, "passed": true, "iterations": 5, "initialErrors": 115, "finalErrors": 0}

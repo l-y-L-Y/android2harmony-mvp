@@ -20,6 +20,27 @@
 - ✅ **支持**:Gradle 工程、老式 Android 工程、XML 布局、DataBinding、Jetpack Compose、单 Activity + Fragment。
 - ❌ **不支持**:游戏/自绘引擎(libGDX、Unity)、跨平台框架(React Native、Flutter)。
 
+## 实测案例:5 个开源 Android 客户端
+
+对 5 个符合转译范围的开源中文客户端做了端到端转译 + 编译修复 + 鸿蒙模拟器实机验证,完整报告与对照截图见 **[`examples/test5-5apps/REPORT.md`](examples/test5-5apps/REPORT.md)**。
+
+| 项目 | 类型 | 首次编译错误 | 修复迭代 | 编译结果 |
+|---|---|---|---|---|
+| JetpackMVVM | 单 Activity+Fragment / MVVM | 7 | 2 | ✅ 通过 |
+| PlayAndroid | 部分 Compose + .kts | 115 | 5 | ✅ 通过 |
+| WanAndroidGoweii | DataBinding + ViewPager | 377→147 | 5 | ✅ 通过 |
+| YCVideoPlayer | 视频播放器示例集 | 126 | 5 | ✅ 通过 |
+| KingTV | 直播/视频客户端 | 46 | 5 | ✅ 通过 |
+
+- **5/5 全部编译通过出 HAP**;首测 4/5 一次过,1 个(WanAndroidGoweii)失败经**转译器根因修复**(保证每个路由页恰好一个 `@Entry` + 结构错误自愈)后再转通过——修复落在转译器代码而非逐项目打补丁。
+- 5/5 在鸿蒙模拟器渲染真实业务界面(歌单/文章流/直播/播放器菜单),非调试壳。
+
+下面是鸿蒙模拟器实机截图:
+
+| JetpackMVVM | PlayAndroid | WanAndroidGoweii | YCVideoPlayer | KingTV |
+|---|---|---|---|---|
+| ![](examples/test5-5apps/screenshots/JetpackMVVM.jpeg) | ![](examples/test5-5apps/screenshots/PlayAndroid2.jpeg) | ![](examples/test5-5apps/screenshots/WanAndroidGoweii.jpeg) | ![](examples/test5-5apps/screenshots/YCVideoPlayer2.jpeg) | ![](examples/test5-5apps/screenshots/KingTV.jpeg) |
+
 ## 环境要求
 
 - Python 3.10+(运行时仅用标准库)。
