@@ -166,7 +166,39 @@ def sanitize_page(code: str, page_name: str, available_media: set[str]) -> str:
         code = re.sub(rf"\bstruct\s+{re.escape(m.group(1))}\b", f"struct {page_name}", code, count=1)
     # export the struct so a host page (tabs/ViewPager) can import it as a child component
     code = re.sub(rf"(?<!export )\bstruct\s+{re.escape(page_name)}\b", f"export struct {page_name}", code, count=1)
+    code = _ensure_single_entry(code, page_name)
     return apply_arkts_fixups(code)
+
+
+def _ensure_single_entry(code: str, page_name: str) -> str:
+    """hvigor requires every page listed in main_pages.json to carry exactly one
+    `@Entry`. The model often renders a fragment-backed page as a pure embeddable
+    component (`@Component export struct`, no `@Entry`), which makes hvigor fail with
+    'must have one and only one @Entry decorator' BEFORE per-file ArkTS error
+    attribution - so the repair loop never sees it. Guarantee one @Entry on the main
+    struct (also dedupes accidental duplicates). @Entry + export only emits a warning,
+    so this is safe for pages that are simultaneously routed and embedded as children."""
+    # Drop every existing @Entry (whole-line first to avoid leaving blank decorator
+    # lines, then any inline remnant), so we can re-add exactly one.
+    code = re.sub(r"^[ \t]*@Entry\b[ \t]*\r?\n", "", code, flags=re.MULTILINE)
+    code = re.sub(r"@Entry\b[ \t]*", "", code)
+    lines = code.split("\n")
+    idx = next(
+        (i for i, ln in enumerate(lines) if re.search(rf"\bstruct\s+{re.escape(page_name)}\b", ln)),
+        None,
+    )
+    if idx is None:
+        return code
+    start = idx
+    while start - 1 >= 0 and lines[start - 1].lstrip().startswith("@"):
+        start -= 1
+    indent = re.match(r"[ \t]*", lines[idx]).group(0)
+    block = lines[start:idx]
+    insert = [indent + "@Entry"]
+    if not any("@Component" in b for b in block):
+        insert.append(indent + "@Component")
+    lines[start:start] = insert
+    return "\n".join(lines)
 
 
 def apply_arkts_fixups(code: str) -> str:

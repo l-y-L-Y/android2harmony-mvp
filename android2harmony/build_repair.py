@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from .knowledge import ARKTS_RULES, attribute_hints_for_errors
-from .llm_page_agent import ARKUI_RULES, apply_arkts_fixups
+from .llm_page_agent import ARKUI_RULES, apply_arkts_fixups, _ensure_single_entry
 from .llm_provider import call_llm, extract_code_block
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -69,6 +69,31 @@ def parse_build_errors(log: str) -> dict[str, list[str]]:
         path = m.group(2).strip()
         errors.setdefault(path, []).append(f"L{m.group(3)}:{m.group(4)} {msg}")
     return errors
+
+
+_ENTRY_ERR = re.compile(r"@Entry'?\s*decorator\.?\s*At File:\s*(.+?\.ets)")
+
+
+def fix_entry_structural_errors(project_dir: Path, log: str) -> list[str]:
+    """hvigor fails a page in main_pages.json that has zero or duplicate `@Entry`
+    decorators with a structural error that carries NO line:col, so parse_build_errors
+    can't see it and the loop would falsely report green. Deterministically force exactly
+    one @Entry on each named file's main struct."""
+    text = ANSI.sub("", log)
+    fixed: list[str] = []
+    for m in _ENTRY_ERR.finditer(text):
+        p = Path(m.group(1).strip())
+        if not p.exists() or p.suffix != ".ets":
+            continue
+        content = p.read_text(encoding="utf-8", errors="ignore")
+        struct = _struct_name(content)
+        if not struct:
+            continue
+        new = _ensure_single_entry(content, struct)
+        if new != content:
+            p.write_text(new, encoding="utf-8")
+            fixed.append(p.name)
+    return fixed
 
 
 def _project_media(project_dir: Path) -> set[str]:
@@ -245,7 +270,12 @@ def repair_build(
         if ok:
             return RepairResult(True, it, initial, 0, repaired, log[-2000:])
         if not errors:
-            # build failed but no parseable ets errors (config/resource issue)
+            # build failed but no parseable ets errors. Most often this is the
+            # structural "@Entry" error (no line:col) which we can fix deterministically.
+            structural = fix_entry_structural_errors(project_dir, log)
+            if structural:
+                emit(f"[iter {it}] forced single @Entry on {len(structural)} page(s): {', '.join(structural)}")
+                continue
             return RepairResult(False, it, initial, total, repaired, log[-2000:])
 
         def _repair(item: tuple[str, list[str]]) -> str:
@@ -284,7 +314,13 @@ def repair_build(
         ok, log = run_hvigor_build(project_dir, hvigorw, node_home, sdk_home)
         errors = parse_build_errors(log)
         total = sum(len(v) for v in errors.values())
-        if ok or not errors:
+        if ok:
+            break
+        if not errors:
+            structural = fix_entry_structural_errors(project_dir, log)
+            if structural:
+                emit(f"[guarantee {guarantee_pass + 1}] forced single @Entry on {len(structural)} page(s): {', '.join(structural)}")
+                continue
             break
         emit(f"[guarantee {guarantee_pass + 1}] {total} errors remain in {len(errors)} files; neutralizing to keep build green")
         for file_path, file_errors in errors.items():
@@ -301,6 +337,9 @@ def repair_build(
 
     ok, log = run_hvigor_build(project_dir, hvigorw, node_home, sdk_home)
     errors = parse_build_errors(log)
+    if not ok and not errors and fix_entry_structural_errors(project_dir, log):
+        ok, log = run_hvigor_build(project_dir, hvigorw, node_home, sdk_home)
+        errors = parse_build_errors(log)
     total = sum(len(v) for v in errors.values())
     emit(f"[final] build {'OK' if ok else 'FAIL'} - {total} errors" + (f"; {len(stubbed)} pages degraded to keep build green" if stubbed else ""))
     return RepairResult(ok, max_iters, initial, total, repaired, log[-2000:], remaining=errors)

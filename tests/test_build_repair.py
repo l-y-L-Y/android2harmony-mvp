@@ -4,10 +4,27 @@ from android2harmony.build_repair import (
     _balanced,
     _safe_placeholder,
     build_repair_prompt,
+    fix_entry_structural_errors,
     guarantee_compile_file,
     parse_build_errors,
     repair_file,
 )
+
+
+def test_fix_entry_structural_error_adds_entry(tmp_path: Path):
+    page = tmp_path / "FragmentProject.ets"
+    page.write_text(
+        "@Component\nexport struct FragmentProject {\n  build() {\n    Column() {}\n  }\n}\n",
+        encoding="utf-8",
+    )
+    log = (
+        "1 ERROR: 10905402 ArkTS Compiler Error\n"
+        "Error Message: A page configured in 'main_pages.json' must have one and only "
+        f"one '@Entry' decorator. At File: {page}\n"
+    )
+    fixed = fix_entry_structural_errors(tmp_path, log)
+    assert fixed == ["FragmentProject.ets"]
+    assert page.read_text(encoding="utf-8").count("@Entry") == 1
 
 
 def test_safe_placeholder_is_valid_balanced_page():

@@ -141,3 +141,31 @@ def test_generate_retries_after_timeout_then_succeeds():
     assert "struct Home" in out
     assert "首页" in out
     assert len(calls) == 2  # recovered on the second attempt
+
+
+def test_sanitize_adds_entry_to_routed_component():
+    # Regression: a fragment-backed page rendered as a pure component (@Component
+    # export struct, no @Entry) fails hvigor's "one and only one @Entry" rule.
+    code = "import x\n\n@Component\nexport struct FragmentProject {\n  build() {\n    Column() {}\n  }\n}\n"
+    out = sanitize_page(code, "FragmentProject", {"foreground"})
+    assert out.count("@Entry") == 1
+    assert out.count("@Component") == 1
+    assert "export struct FragmentProject" in out
+
+
+def test_sanitize_dedupes_duplicate_entry():
+    code = "@Entry\n@Entry\n@Component\nstruct Home {\n  build() {\n    Text('x')\n  }\n}\n"
+    out = sanitize_page(code, "Home", {"foreground"})
+    assert out.count("@Entry") == 1
+
+
+def test_sanitize_entry_only_on_main_struct():
+    code = ("@Component\nexport struct Main {\n  build() {}\n}\n\n"
+            "@Component\nstruct Row {\n  build() {}\n}\n")
+    out = sanitize_page(code, "Main", {"foreground"})
+    lines = out.split("\n")
+    mi = next(i for i, l in enumerate(lines) if "struct Main" in l)
+    ri = next(i for i, l in enumerate(lines) if "struct Row" in l)
+    assert lines[mi - 2].strip() == "@Entry"  # @Entry above Main's @Component
+    assert lines[ri - 2].strip() != "@Entry"  # Row stays a plain component
+    assert out.count("@Entry") == 1
