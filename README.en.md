@@ -48,6 +48,7 @@ Want to see exactly what the transpiler "eats and emits"? **[`examples/jetpackmv
 - `android-original/` — the original Android source (71 Java + 34 XML).
 - `harmony-output/` — the generated HarmonyOS project (101 `.ets`, build caches stripped), with a fully annotated **output directory structure**.
 - Login-page **before/after code comparison** (DataBinding XML → ArkUI `@State` declarative UI).
+- **[The raw migration report generated directly by the transpiler for JetpackMVVM (no beautification)](examples/jetpackmvvm-deep-dive/harmony-output/migration-report.md)**
 
 ## Requirements
 
