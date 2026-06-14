@@ -1,0 +1,152 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Migrated HarmonyOS module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Migrated entry ability"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "JetpackMVVM"
+    },
+    {
+      "name": "app_name",
+      "value": "JetpackMVVM"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "Load migrated network data and images"
+    },
+    {
+      "name": "app_name_debug",
+      "value": "PureMusic-Debug"
+    },
+    {
+      "name": "welcome_back",
+      "value": "欢迎回来"
+    },
+    {
+      "name": "free_music_json",
+      "value": "\n        \"{\\\"albumId\\\":\\\"001\\\",\\\"title\\\":\\\"Cute\\\",\\\"summary\\\":\\\"BenSound\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-570ed96eb055ef17.png\\\",\\\"musics\\\":[{\\\"musicId\\\":\\\"001\\\",\\\"title\\\":\\\"Tomorrow\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-570ed96eb055ef17.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"002\\\",\\\"title\\\":\\\"Sunny\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-8a7d311f2a758d4c.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"003\\\",\\\"title\\\":\\\"Energy\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-9f034d4886c8fe77.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"004\\\",\\\"title\\\":\\\"Epic\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-00b8c58771bdc34d.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"005\\\",\\\"title\\\":\\\"Slow motion\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-2ebb4f068282a46e.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"006\\\",\\\"title\\\":\\\"Cute\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-bc522cc201c4dfef.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"007\\\",\\\"title\\\":\\\"Beach Party\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-07ab1f9932cdad6a.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"008\\\",\\\"title\\\":\\\"Actionable\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-fc92ea6f8f164947.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"009\\\",\\\"title\\\":\\\"Smile\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-805e2bbbbde2a3a6.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"010\\\",\\\"title\\\":\\\"Forever\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-0af32fdf88b1ee83.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"011\\\",\\\"title\\\":\\\"Yestoday\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-570ed96eb055ef17.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"012\\\",\\\"title\\\":\\\"MonDay\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-8a7d311f2a758d4c.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"013\\\",\\\"title\\\":\\\"Tuesday\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-9f034d4886c8fe77.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"014\\\",\\\"title\\\":\\\"Wednesday\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-00b8c58771bdc34d.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"015\\\",\\\"title\\\":\\\"Thursday\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-2ebb4f068282a46e.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"016\\\",\\\"title\\\":\\\"Friday\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-bc522cc201c4dfef.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"017\\\",\\\"title\\\":\\\"Saturday\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-07ab1f9932cdad6a.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"018\\\",\\\"title\\\":\\\"Sunday\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-fc92ea6f8f164947.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"019\\\",\\\"title\\\":\\\"HaHa\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-805e2bbbbde2a3a6.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"},{\\\"musicId\\\":\\\"020\\\",\\\"title\\\":\\\"Good\\\",\\\"artist\\\":{\\\"name\\\":\\\"UnKnown\\\"},\\\"coverImg\\\":\\\"https://upload-images.jianshu.io/upload_images/57036-0af32fdf88b1ee83.png\\\",\\\"url\\\":\\\"bensound-sunny.mp3\\\"}]}\"\n    "
+    },
+    {
+      "name": "library_json",
+      "value": "\n        \"[{\\\"title\\\":\\\"Lifecycle\\\",\\\"summary\\\":\\\"主要用于在软件工程的背景下，解决生命周期管理的一致性问题\\\",\\\"url\\\":\\\"https://xiaozhuanlan.com/topic/3684721950\\\"},{\\\"title\\\":\\\"LiveData\\\",\\\"summary\\\":\\\"主要用于配合 “可信源” 实现消息的读写分离，从而确保消息分发的可靠一致，避免收到不可预期的推送或脏数据\\\",\\\"url\\\":\\\"https://xiaozhuanlan.com/topic/0168753249\\\"},{\\\"title\\\":\\\"ViewModel\\\",\\\"summary\\\":\\\"主要用于托管页面状态、分治视图控制器重建时的状态恢复，从而提升状态恢复的效率和节省不必要的流量、电量开销\\\",\\\"url\\\":\\\"https://xiaozhuanlan.com/topic/6257931840\\\"},{\\\"title\\\":\\\"DataBinding\\\",\\\"summary\\\":\\\"主要用于在软件工程的背景下，解决 “视图实例 null 安全” 的一致性问题\\\",\\\"url\\\":\\\"https://xiaozhuanlan.com/topic/9816742350\\\"},{\\\"title\\\":\\\"Navigation\\\",\\\"summary\\\":\\\"通过声明式编程来解决 “应用内路由导航” 和 “初值传参” 的一致性问题\\\",\\\"url\\\":\\\"https://xiaozhuanlan.com/topic/5860149732\\\"}]\"\n    "
+    },
+    {
+      "name": "play",
+      "value": "播放"
+    },
+    {
+      "name": "notify_of_play",
+      "value": "播放时的通知栏展示"
+    },
+    {
+      "name": "network_unconnected",
+      "value": "网络断开了"
+    },
+    {
+      "name": "play_repeat",
+      "value": "列表循环"
+    },
+    {
+      "name": "play_repeat_once",
+      "value": "单曲循环"
+    },
+    {
+      "name": "play_shuffle",
+      "value": "随机播放"
+    },
+    {
+      "name": "unfinished",
+      "value": "这是个前排吃瓜的按钮！ ^_^"
+    },
+    {
+      "name": "recently",
+      "value": "最近播放"
+    },
+    {
+      "name": "best_practice",
+      "value": "最佳实践"
+    },
+    {
+      "name": "app_summary",
+      "value": "是难得一见的 Jetpack MVVM 最佳实践！"
+    },
+    {
+      "name": "project_title",
+      "value": "本项目中用到的技术点包括："
+    },
+    {
+      "name": "Copyright",
+      "value": "Product with love by KunMinX @2019"
+    },
+    {
+      "name": "search_page_tip",
+      "value": "本页面用于测试 Navigation 路由导航"
+    },
+    {
+      "name": "test_download",
+      "value": "点击测试下载，返回页面仍有效"
+    },
+    {
+      "name": "test_lifecycle_download",
+      "value": "点击测试下载，离开页面即中止"
+    },
+    {
+      "name": "search_back",
+      "value": "右滑关闭本页面"
+    },
+    {
+      "name": "relearn_android",
+      "value": "《重学安卓》"
+    },
+    {
+      "name": "learn_more_friends",
+      "value": "付费读者加微信进群 myatejx"
+    },
+    {
+      "name": "learn_more",
+      "value": "Learn More"
+    },
+    {
+      "name": "login_title",
+      "value": "欢迎来到 Jetpack MVVM 的世界"
+    },
+    {
+      "name": "login_content",
+      "value": "Welcome to the world of Jetpack MVVM best practice !"
+    },
+    {
+      "name": "user_name",
+      "value": "请输入用户名"
+    },
+    {
+      "name": "user_password",
+      "value": "请输入密码"
+    },
+    {
+      "name": "login",
+      "value": "登录"
+    },
+    {
+      "name": "username_or_pwd_incomplete",
+      "value": "用户名或密码不完整"
+    },
+    {
+      "name": "network_state_retry",
+      "value": "网络状态不佳，请重试"
+    },
+    {
+      "name": "article_navigation",
+      "value": "https://xiaozhuanlan.com/topic/5860149732"
+    },
+    {
+      "name": "github_project",
+      "value": "https://github.com/KunMinX/Jetpack-MVVM-Best-Practice"
+    }
+  ]
+}

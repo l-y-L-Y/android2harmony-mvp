@@ -41,6 +41,15 @@
 |---|---|---|---|---|
 | ![](examples/test5-5apps/screenshots/JetpackMVVM.jpeg) | ![](examples/test5-5apps/screenshots/PlayAndroid2.jpeg) | ![](examples/test5-5apps/screenshots/WanAndroidGoweii.jpeg) | ![](examples/test5-5apps/screenshots/YCVideoPlayer2.jpeg) | ![](examples/test5-5apps/screenshots/KingTV.jpeg) |
 
+### 单项目深度拆解(看清输入/输出与目录结构)
+
+想看转译器具体「吃进什么、吐出什么」?**[`examples/jetpackmvvm-deep-dive/`](examples/jetpackmvvm-deep-dive/README.md)** 把 JetpackMVVM 一个项目完整摊开:
+
+- `android-original/` —— 原始 Android 源码(71 个 Java + 34 个 XML)。
+- `harmony-output/` —— 生成的鸿蒙工程(101 个 `.ets`,已剔除编译缓存),含带注释的**完整输出目录结构**说明。
+- 登录页 **Before/After 代码对照**(DataBinding XML → ArkUI `@State` 声明式)。
+- **[`针对项目 JetpackMVVM转译后直接生成的报告（无美化）`](examples/jetpackmvvm-deep-dive/harmony-output/migration-report.md)** 
+
 ## 环境要求
 
 - Python 3.10+(运行时仅用标准库)。
