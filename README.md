@@ -1,79 +1,96 @@
-# Android to HarmonyOS Migration MVP
+# Android → 鸿蒙(HarmonyOS)转译器
 
-This repository contains a local Android-to-HarmonyOS migration tool. It generates DevEco/Hvigor projects, preserves Android source snapshots, creates migration reports, and can optionally use Mimo to refine generated ArkUI pages and agent artifacts.
+把中文 Android 客户端 App 转译成鸿蒙 ArkTS / ArkUI(Stage 模型)工程的本地工具。流程为:**分析 Android 工程 → 生成鸿蒙工程 → 编译并自动修复编译错误 → 装到鸿蒙模拟器验证**。可选调用 Mimo(mimo-v2.5-pro)逐页精修 ArkUI 页面。
 
-## What It Does
+> English version: see [README.en.md](README.en.md)
 
-- Analyzes Gradle Android projects, modules, manifests, source files, resources, dependencies, and migration risks.
-- Generates a HarmonyOS Stage Model project that DevEco Studio and Hvigor can open and build.
-- Converts Android XML layouts into ArkUI page drafts with rule-based mappings.
-- Copies strings, images, fonts, and original Android XML/source snapshots.
-- Generates Agent workspace artifacts: understanding, planning, migration tasks, UITest DSL, repair loop, and reports.
-- Optionally calls Mimo for page-level ArkUI refinement and all-agent migration artifact enhancement after rule generation.
-- Supports batch conversion for multiple Android repositories.
-- Supports device validation through `hdc`, `aa start`, `uitest dumpLayout`, and `uitest screenCap`.
+## 它能做什么
 
-## Rule-Only Conversion
+- 分析 Gradle Android 工程:模块、清单、源码、资源、依赖、迁移风险。
+- 生成 DevEco Studio / Hvigor 可直接打开并编译的鸿蒙 Stage 模型工程。
+- 把 Android XML 布局按规则映射成 ArkUI 页面草稿。
+- 迁移字符串、图片、字体,并保留原始 Android XML/源码快照。
+- 生成迁移工作区产物:理解、规划、迁移任务、UITest DSL、修复循环、报告。
+- **自给自足的编译修复循环**:编译失败时自动定位并修复 ArkTS 错误,迭代到通过(确定性修复 + LLM 修复 + 兜底保编译),无需手工逐项目打补丁。
+- 支持批量转译多个 Android 仓库。
+- 支持通过 `hdc` / `aa start` / `uitest` 做实机安装与截图验证。
 
-```powershell
-cd D:\codex\android2harmony-mvp
-python -m android2harmony.cli convert D:\work\Android\Simple-Gallery --output D:\codex\out\simple-gallery-harmony --force
+## 支持范围
+
+- ✅ **支持**:Gradle 工程、老式 Android 工程、XML 布局、DataBinding、Jetpack Compose、单 Activity + Fragment。
+- ❌ **不支持**:游戏/自绘引擎(libGDX、Unity)、跨平台框架(React Native、Flutter)。
+
+## 环境要求
+
+- Python 3.10+(运行时仅用标准库)。
+- 鸿蒙工具链:DevEco Studio(含 hvigor、node、hdc、SDK),编译/装机时需要。
+- (可选)Mimo 大模型账号,用于逐页精修与迁移产物增强。
+
+## 配置 Mimo(不要把 token 写进仓库)
+
+token 通过环境变量或本地 `.env` 提供。**`.env` 已在 `.gitignore` 中,不会被提交**。在仓库根目录新建 `.env`:
+
+```dotenv
+ANDROID2HARMONY_LLM_MODEL=mimo-v2.5-pro
+# Anthropic 兼容端点(二选一)
+ANTHROPIC_BASE_URL=https://token-plan-sgp.xiaomimimo.com/anthropic
+ANTHROPIC_AUTH_TOKEN=<你的-token>
+# 或 OpenAI 兼容端点
+# ANDROID2HARMONY_LLM_PROVIDER=openai-compatible
+# OPENAI_BASE_URL=https://token-plan-sgp.xiaomimimo.com/v1
+# OPENAI_API_KEY=<你的-token>
 ```
 
-## Batch Conversion
+CLI 启动时会自动加载 `.env`。测试连通性:
 
 ```powershell
-python -m android2harmony.cli batch-convert D:\work\Android --output-root D:\codex\out\batch-harmony-rules --force
-```
-
-## Web Upload UI
-
-Start the local web UI:
-
-```powershell
-cd D:\codex\android2harmony-mvp
-python -m android2harmony.cli web --host 127.0.0.1 --port 8765
-```
-
-Open `http://127.0.0.1:8765`, upload a zipped Android project, and download the generated HarmonyOS project zip after conversion. The page also exposes the Markdown migration report and machine-readable JSON report as separate downloads. Server-side jobs are written under `D:\codex\out\web-migrations`.
-
-## Mimo Agent Enhancement
-
-Do not commit tokens. Set them in the shell only:
-
-```powershell
-$env:ANDROID2HARMONY_LLM_PROVIDER = "openai-compatible"
-$env:OPENAI_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
-$env:ANDROID2HARMONY_LLM_MODEL = "mimo-v2.5-pro"
-$env:OPENAI_API_KEY = "<token>"
-
 python -m android2harmony.cli llm-check
-python -m android2harmony.cli convert D:\work\Android\Simple-Gallery --output D:\codex\out\simple-gallery-harmony-llm --force --llm-all-agents --llm-max-pages 3
 ```
 
-`--llm-all-agents` asks every useful migration agent to call Mimo and keeps rule-based output only when an LLM call fails validation, times out, or returns content that would make the result worse. `--llm-max-pages` controls how many generated ArkUI pages may be directly rewritten by the model.
-
-## Build
+## 三步用法
 
 ```powershell
-$env:DEVECO_SDK_HOME = "D:\DevEco Studio\sdk"
-& "D:\DevEco Studio\tools\hvigor\bin\hvigorw.bat" assembleApp --node-home "D:\DevEco Studio\tools\node" --no-daemon --stacktrace
+# 1. 转译:分析 Android 工程 + LLM 生成鸿蒙工程
+python -m android2harmony.cli convert "<Android工程目录>" -o "<输出目录>" --force --llm-refine-pages
+
+# 2. 编译并自动修复编译错误(迭代到通过)
+python -m android2harmony.cli repair-build "<输出目录>" --max-iters 5
+
+# 3. 装到鸿蒙模拟器并截图(先确保 hdc list targets 能看到设备,如 127.0.0.1:5555)
+python -m android2harmony.cli validate-device "<输出目录>" --bundle <bundleName>
 ```
 
-## Device Validation
+- `<bundleName>` 取自输出目录 `AppScope/app.json5` 的 `bundleName` 字段。
+- 只想要源码不编译:只跑第 1 步,然后用 DevEco Studio 打开输出目录。
+- 大项目较慢属正常:每页一次模型推理,默认 4 路并行(可用 `ANDROID2HARMONY_LLM_CONCURRENCY` 调整)。
 
-Start a HarmonyOS emulator or connect a device first:
+## 输出结构
+
+转译输出目录里:
+
+| 内容 | 位置 |
+|---|---|
+| 生成的 ArkUI 页面源码 | `entry/src/main/ets/pages/*.ets` |
+| 迁移报告(API/网络/数据库/风险/未完成项) | `migration-report.md` |
+| UI 保真报告(入口屏、各页是 LLM 生成/兜底/占位、已知限制) | `agent-workspace/03-migration/ui-fidelity-report.md` |
+| LLM 调用记录 | `agent-workspace/llm-calls/` |
+| 实机截图(第 3 步生成) | `uitest-screenshot.png` |
+| 用 DevEco 打开 | 直接打开整个输出目录 |
+
+## 其它命令
 
 ```powershell
-& "D:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe" list targets
+python -m android2harmony.cli analyze "<Android工程目录>"     # 只分析:模块/页面/风险
+python -m android2harmony.cli batch-convert "<含多个App的目录>" -o "<输出根目录>" --force --llm-refine-pages
+python -m android2harmony.cli web --host 127.0.0.1 --port 8765 # 网页上传 zip 转译
 ```
 
-Then run:
+## 已知限制
+
+这不是完整的语义编译器。Room、Hilt、Android Framework API 调用、MediaStore、权限、真实数据绑定、完整导航等仍需迁移规则或 LLM 辅助修复阶段补齐。这些缺口会在迁移报告与工作区文件里显式标注。
+
+## 测试
 
 ```powershell
-python -m android2harmony.cli validate-device D:\codex\out\simple-gallery-harmony --bundle com.generated.simplegallery
+python -m pytest
 ```
-
-## Current Limits
-
-This is not a complete semantic compiler. Room, Hilt, Android Framework API calls, media store behavior, permissions, real data binding, and full navigation still require migration rules or LLM-assisted repair stages. The current design keeps those gaps explicit in reports and Agent workspace files.
