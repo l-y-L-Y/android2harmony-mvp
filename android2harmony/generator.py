@@ -180,6 +180,9 @@ def generate_harmony_project(
                         reason=f"{err}; kept rule-based page", prompt_chars=0,
                         response_chars=0, prompt="", response="",
                     ))
+    # Auto-wire imports for embedded sibling fragment components (hosts that render
+    # FragmentXxx() inline often omit the import).
+    wire_sibling_imports(output_dir / "entry" / "src" / "main" / "ets" / "pages")
     # Write the page map only for routes whose .ets actually exists, so one failed page
     # cannot break the whole build with a "Page does not exist" resource error.
     existing_routes = [r for r in pipeline.routes if (output_dir / "entry" / "src" / "main" / "ets" / f"{r}.ets").exists()]
@@ -1900,6 +1903,25 @@ def _sanitize_media_filename(name: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9_]", "_", stem)
     stem = re.sub(r"_+", "_", stem).strip("_") or "media"
     return f"{stem}{path.suffix.lower()}"
+
+
+def wire_sibling_imports(pages_dir: Path) -> int:
+    """Auto-add `import { X } from './X'` when a page renders a sibling page component
+    `X()` (an embedded fragment) but forgot the import. Deterministic and precise:
+    only fires for names that are actual generated page files."""
+    if not pages_dir.exists():
+        return 0
+    names = {p.stem for p in pages_dir.glob("*.ets")}
+    wired = 0
+    for p in pages_dir.glob("*.ets"):
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        used = set(re.findall(r"\b([A-Z][A-Za-z0-9_]*)\(\)", text))
+        needed = sorted(n for n in used if n in names and n != p.stem and f"from './{n}'" not in text)
+        if needed:
+            header = "".join(f"import {{ {n} }} from './{n}';\n" for n in needed)
+            p.write_text(header + text, encoding="utf-8")
+            wired += 1
+    return wired
 
 
 def _available_media_names(project: AndroidProject) -> set[str]:
