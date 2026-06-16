@@ -201,9 +201,69 @@ def _ensure_single_entry(code: str, page_name: str) -> str:
     return "\n".join(lines)
 
 
+def _match_brace(s: str, open_idx: int) -> int:
+    """Index of the '}' matching the '{' at open_idx, or -1."""
+    depth = 0
+    for i in range(open_idx, len(s)):
+        if s[i] == "{":
+            depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _hoist_nested_interfaces(code: str) -> str:
+    """ArkTS forbids `interface`/`type` declared inside a `struct` body; the model often
+    puts the @State data shape there, which cascades into ~20 parse errors and gets the
+    whole (often complex) page stubbed. Deterministically lift those declarations to
+    module top level, just above the struct's decorators."""
+    sm = re.search(r"\bstruct\s+\w+\s*\{", code)
+    if not sm:
+        return code
+    body_open = code.index("{", sm.start())
+    body_close = _match_brace(code, body_open)
+    if body_close < 0:
+        return code
+    body = code[body_open + 1:body_close]
+
+    spans: list[tuple[int, int]] = []
+    for m in re.finditer(r"\binterface\s+\w+\s*\{", body):
+        o = body.index("{", m.start())
+        c = _match_brace(body, o)
+        if c >= 0:
+            spans.append((m.start(), c + 1))
+    if not spans:
+        return code
+    spans.sort()
+
+    hoisted: list[str] = []
+    parts: list[str] = []
+    last = 0
+    for s, e in spans:
+        parts.append(body[last:s])
+        hoisted.append(body[s:e].strip())
+        last = e
+    parts.append(body[last:])
+    new_body = "".join(parts)
+
+    # insertion point: start of the struct's leading decorator block (module level)
+    ls = code.rfind("\n", 0, sm.start()) + 1
+    while True:
+        pls = code.rfind("\n", 0, ls - 1) + 1
+        if pls < ls and code[pls:ls - 1].lstrip().startswith("@"):
+            ls = pls
+        else:
+            break
+    block = "\n".join(hoisted) + "\n\n"
+    return code[:ls] + block + code[ls:body_open + 1] + new_body + code[body_close:]
+
+
 def apply_arkts_fixups(code: str) -> str:
     """Deterministic fixes for unambiguous ArkUI API mistakes that the model repeats.
     Only safe, context-free substitutions live here; semantic errors go to LLM repair."""
+    code = _hoist_nested_interfaces(code)
     # Spacer -> Blank (Spacer does not exist in ArkUI)
     code = re.sub(r"\bSpacer\s*\(", "Blank(", code)
     # ImageSize.Stretch -> Cover (Stretch is not a valid ImageSize)

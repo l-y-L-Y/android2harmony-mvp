@@ -7,6 +7,41 @@ from android2harmony.llm_page_agent import (
 )
 
 
+def test_hoist_nested_interface_out_of_struct():
+    # interface declared inside the struct body (illegal in ArkTS) must move to top level
+    bad = (
+        "@Entry\n@Component\nexport struct Title {\n"
+        "  interface Basic {\n    cityName: string\n  }\n"
+        "  @State weather: Basic = { cityName: '北京' }\n"
+        "  build() {\n    Row() {\n      Text(this.weather.cityName)\n    }\n  }\n}\n"
+    )
+    out = apply_arkts_fixups(bad)
+    # interface no longer sits between struct '{' and build()
+    struct_pos = out.index("struct Title")
+    iface_pos = out.index("interface Basic")
+    assert iface_pos < struct_pos  # hoisted above the struct
+    # struct body keeps the state + build, no nested interface
+    body = out[out.index("struct Title"):]
+    assert "interface Basic" not in body
+    assert "@State weather" in body and "build()" in body
+
+
+def test_hoist_keeps_interface_dependency_order():
+    bad = (
+        "@Component\nstruct W {\n"
+        "  interface Update {\n    time: string\n  }\n"
+        "  interface Basic {\n    u: Update\n  }\n"
+        "  build() {\n    Column() {}\n  }\n}\n"
+    )
+    out = apply_arkts_fixups(bad)
+    assert out.index("interface Update") < out.index("interface Basic") < out.index("struct W")
+
+
+def test_fixups_noop_without_nested_interface():
+    good = "@Entry\n@Component\nstruct P {\n  build() {\n    Column() {\n      Text('hi')\n    }\n  }\n}\n"
+    assert "interface" not in apply_arkts_fixups(good)
+
+
 def test_prompt_includes_navigation_catalog():
     prompt = build_page_prompt(
         "MainActivity", "<x/>", "App",

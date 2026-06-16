@@ -106,6 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
     emulator.add_argument("--deployed-root", type=Path, help="DevEco emulator deployed root that contains device folders.")
     emulator.add_argument("--image-root", type=Path, help="Huawei SDK image root that contains system-image/...")
 
+    metrics_p = sub.add_parser("metrics", help="Score generated pages for blank/placeholder content (silent fidelity loss).")
+    metrics_p.add_argument("project", type=Path)
+
     batch = sub.add_parser("batch-convert", help="Convert every Gradle Android project under a directory.")
     batch.add_argument("input_root", type=Path)
     batch.add_argument("--output-root", "-o", type=Path, required=True)
@@ -196,6 +199,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Report index: {output}")
             return 0
 
+        if args.command == "metrics":
+            from .page_metrics import write_page_metrics
+            report = write_page_metrics(args.project)
+            print(json.dumps({
+                "project": report["project"],
+                "totalPages": report["totalPages"],
+                "byClass": report["byClass"],
+                "blankLikePages": report["blankLikePages"],
+                "blankLikeRatio": report["blankLikeRatio"],
+                "richRatio": report["richRatio"],
+            }, ensure_ascii=False, indent=2))
+            return 0
+
         if args.command == "emulator-diagnose":
             result = run_emulator_diagnostic(
                 args.emulator,
@@ -245,6 +261,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Copied files: {len(result.copied_files)}")
         print(f"Issues: {len(result.issues)}")
         print(f"Report: {result.output_dir / 'migration-report.md'}")
+        from .page_metrics import write_page_metrics
+        pm = write_page_metrics(result.output_dir)
+        print(f"Page content: {pm['totalPages']} pages, "
+              f"{pm['blankLikePages']} blank-like ({pm['blankLikeRatio']:.0%}), "
+              f"rich {pm['richRatio']:.0%}  -> {result.output_dir / 'page-metrics.md'}")
         return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
