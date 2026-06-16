@@ -6,6 +6,7 @@ Iterates until the build passes or the iteration budget is exhausted.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -93,6 +94,73 @@ def fix_entry_structural_errors(project_dir: Path, log: str) -> list[str]:
         if new != content:
             p.write_text(new, encoding="utf-8")
             fixed.append(p.name)
+    return fixed
+
+
+def _sanitize_res_name(name: str) -> str:
+    """HarmonyOS resource names must match [a-zA-Z0-9_]; Android allows '.'/'-' etc."""
+    s = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    s = re.sub(r"_+", "_", s).strip("_") or "res"
+    if s[0].isdigit():
+        s = "_" + s
+    return s
+
+
+_RES_INVALID_NAME = re.compile(r"Invalid resource name '([^']+)'.*?At file:\s*(.+?\.json)", re.S)
+_RES_CONFLICT = re.compile(
+    r"Resource '([^']+)' conflict\. It is first declared at '([^']+)' and declared again at '([^']+)'",
+    re.S,
+)
+
+
+def fix_resource_errors(project_dir: Path, log: str) -> list[str]:
+    """hvigor fails in the CompileResource stage (before ArkTS), so parse_build_errors
+    sees 0 line:col errors and the loop would falsely give up. Deterministically heal:
+      - 11211116 invalid resource name -> sanitize every illegal name in that element json
+        to [a-zA-Z0-9_], dropping post-sanitize collisions.
+      - 11211117 resource name conflict -> delete the duplicate (second-declared) file."""
+    text = ANSI.sub("", log)
+    fixed: list[str] = []
+    handled_json: set[str] = set()
+    for m in _RES_INVALID_NAME.finditer(text):
+        jpath = Path(m.group(2).strip())
+        key = str(jpath)
+        if key in handled_json or not jpath.exists():
+            continue
+        handled_json.add(key)
+        try:
+            data = json.loads(jpath.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        changed = False
+        for arr_key, arr in data.items():
+            if not isinstance(arr, list):
+                continue
+            seen: set[str] = set()
+            rebuilt: list[object] = []
+            for entry in arr:
+                if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                    safe = _sanitize_res_name(entry["name"])
+                    if safe != entry["name"]:
+                        changed = True
+                    if safe in seen:
+                        changed = True
+                        continue  # drop post-sanitize duplicate
+                    entry["name"] = safe
+                    seen.add(safe)
+                rebuilt.append(entry)
+            data[arr_key] = rebuilt
+        if changed:
+            jpath.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            fixed.append(f"name:{jpath.name}")
+    for m in _RES_CONFLICT.finditer(text):
+        dup = Path(m.group(3).strip())
+        if dup.exists():
+            try:
+                dup.unlink()
+                fixed.append(f"dup:{dup.name}")
+            except OSError:
+                pass
     return fixed
 
 
@@ -276,6 +344,10 @@ def repair_build(
             if structural:
                 emit(f"[iter {it}] forced single @Entry on {len(structural)} page(s): {', '.join(structural)}")
                 continue
+            resource = fix_resource_errors(project_dir, log)
+            if resource:
+                emit(f"[iter {it}] healed resource errors: {', '.join(resource)}")
+                continue
             return RepairResult(False, it, initial, total, repaired, log[-2000:])
 
         def _repair(item: tuple[str, list[str]]) -> str:
@@ -321,6 +393,10 @@ def repair_build(
             if structural:
                 emit(f"[guarantee {guarantee_pass + 1}] forced single @Entry on {len(structural)} page(s): {', '.join(structural)}")
                 continue
+            resource = fix_resource_errors(project_dir, log)
+            if resource:
+                emit(f"[guarantee {guarantee_pass + 1}] healed resource errors: {', '.join(resource)}")
+                continue
             break
         emit(f"[guarantee {guarantee_pass + 1}] {total} errors remain in {len(errors)} files; neutralizing to keep build green")
         for file_path, file_errors in errors.items():
@@ -337,7 +413,9 @@ def repair_build(
 
     ok, log = run_hvigor_build(project_dir, hvigorw, node_home, sdk_home)
     errors = parse_build_errors(log)
-    if not ok and not errors and fix_entry_structural_errors(project_dir, log):
+    if not ok and not errors and (
+        fix_entry_structural_errors(project_dir, log) or fix_resource_errors(project_dir, log)
+    ):
         ok, log = run_hvigor_build(project_dir, hvigorw, node_home, sdk_home)
         errors = parse_build_errors(log)
     total = sum(len(v) for v in errors.values())

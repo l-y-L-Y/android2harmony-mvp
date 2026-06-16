@@ -1,14 +1,61 @@
 from pathlib import Path
 
+import json
+
 from android2harmony.build_repair import (
     _balanced,
     _safe_placeholder,
+    _sanitize_res_name,
     build_repair_prompt,
     fix_entry_structural_errors,
+    fix_resource_errors,
     guarantee_compile_file,
     parse_build_errors,
     repair_file,
 )
+
+
+def test_sanitize_res_name():
+    assert _sanitize_res_name("nb.title.app") == "nb_title_app"
+    assert _sanitize_res_name("a-b.c") == "a_b_c"
+    assert _sanitize_res_name("123abc")[0] == "_"
+    assert _sanitize_res_name("...") == "res"
+
+
+def test_fix_resource_invalid_name_sanitizes_and_dedups(tmp_path: Path):
+    j = tmp_path / "string.json"
+    j.write_text(
+        json.dumps({"string": [
+            {"name": "nb.title.app", "value": "标题"},
+            {"name": "nb_title_app", "value": "撞名"},  # collides after sanitize -> dropped
+            {"name": "ok_name", "value": "保留"},
+        ]}),
+        encoding="utf-8",
+    )
+    log = (
+        "ERROR: 11211116\nError: Resource Pack Error\n"
+        f"Error Message: Invalid resource name 'nb.title.app'. It should match the pattern "
+        f"[a-zA-Z0-9_]. At file: {j}\n"
+    )
+    fixed = fix_resource_errors(tmp_path, log)
+    assert fixed == [f"name:{j.name}"]
+    names = [s["name"] for s in json.loads(j.read_text(encoding="utf-8"))["string"]]
+    assert names == ["nb_title_app", "ok_name"]  # dotted sanitized, duplicate dropped, value kept
+
+
+def test_fix_resource_conflict_deletes_duplicate(tmp_path: Path):
+    first = tmp_path / "ic_play.webp"
+    dup = tmp_path / "ic_play.png"
+    first.write_bytes(b"a")
+    dup.write_bytes(b"b")
+    log = (
+        "ERROR: 11211117\nError: Resource Pack Error\n"
+        f"Error Message: Resource 'ic_play' conflict. It is first declared at '{first}' "
+        f"and declared again at '{dup}'.\n"
+    )
+    fixed = fix_resource_errors(tmp_path, log)
+    assert fixed == [f"dup:{dup.name}"]
+    assert first.exists() and not dup.exists()  # keep first, drop the later duplicate
 
 
 def test_fix_entry_structural_error_adds_entry(tmp_path: Path):

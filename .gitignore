@@ -3,3 +3,4 @@
 .env
 out/
 *.log
+scratch/

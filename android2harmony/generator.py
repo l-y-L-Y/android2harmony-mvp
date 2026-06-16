@@ -1851,6 +1851,16 @@ def _page_navigation_code(pad: str) -> str:
     )
 
 
+def _sanitize_resource_name(name: str) -> str:
+    """HarmonyOS resource names must match [a-zA-Z0-9_]; Android allows '.'/'-' etc.
+    (e.g. string name 'nb.title.app' -> 'nb_title_app')."""
+    s = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    s = re.sub(r"_+", "_", s).strip("_") or "res"
+    if s[0].isdigit():
+        s = "_" + s
+    return s
+
+
 def _strings_json(module: AndroidModule | None, project_name: str) -> str:
     strings = {
         "string": [
@@ -1870,8 +1880,11 @@ def _strings_json(module: AndroidModule | None, project_name: str) -> str:
                 for item in tree.findall(".//string"):
                     name = item.attrib.get("name")
                     value = "".join(item.itertext())
-                    if name and not any(s["name"] == name for s in strings["string"]):
-                        strings["string"].append({"name": name, "value": value})
+                    if not name:
+                        continue
+                    safe = _sanitize_resource_name(name)
+                    if not any(s["name"] == safe for s in strings["string"]):
+                        strings["string"].append({"name": safe, "value": value})
             except ET.ParseError:
                 pass
     return json.dumps(strings, indent=2, ensure_ascii=False)
@@ -1884,6 +1897,10 @@ def _copy_resources(module: AndroidModule, output_dir: Path) -> list[Path]:
     for src in module.resource_files:
         if src.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".svg", ".ttf", ".otf"}:
             dest = media_root / _sanitize_media_filename(src.name)
+            # HarmonyOS keys media by name without extension, so 'x.png' and 'x.webp'
+            # collide. Keep the first; skip any later file with the same stem.
+            if media_root.exists() and any(media_root.glob(dest.stem + ".*")):
+                continue
         else:
             base_res = module.path / "src" / "main" / "res"
             if base_res.exists() and src.is_relative_to(base_res):
