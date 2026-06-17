@@ -3,10 +3,34 @@ from __future__ import annotations
 import json
 import re
 import xml.etree.ElementTree as ET
+from functools import lru_cache
 from pathlib import Path
 
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+
+
+@lru_cache(maxsize=64)
+def _module_layout_dirs(module_path_str: str) -> tuple[Path, ...]:
+    """All `layout/` directories under the module, not just the standard `res/layout`.
+    Some projects keep layouts in custom resource roots (e.g. `res/common/layout/`,
+    flavor source sets); the analyzer finds those via a broad scan, so the route->layout
+    mapping must too, or the whole app silently degrades to placeholders (no LLM refine)."""
+    module_path = Path(module_path_str)
+    dirs: list[Path] = []
+    seen: set[str] = set()
+    res_roots = list(module_path.glob("src/*/res*")) + [
+        module_path / "src" / "main" / "res",
+        module_path / "res",
+    ]
+    for res in res_roots:
+        if not res.is_dir():
+            continue
+        for d in res.rglob("layout"):
+            if d.is_dir() and "build" not in d.parts and str(d) not in seen:
+                seen.add(str(d))
+                dirs.append(d)
+    return tuple(dirs)
 
 
 def translate_layout_file(
@@ -273,7 +297,7 @@ def page_to_layout_file(module_path: Path, route: str) -> Path | None:
     # since Android reverses word order between class and layout file conventions.
     base = re.sub(r"(?i)^activity|activity$", "", page) or page
     snake_base = _camel_to_snake(base)
-    layout_dirs = [
+    layout_dirs = list(_module_layout_dirs(str(module_path))) or [
         module_path / "src" / "main" / "res" / "layout",
         module_path / "res" / "layout",
     ]

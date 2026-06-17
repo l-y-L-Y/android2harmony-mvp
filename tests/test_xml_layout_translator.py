@@ -39,6 +39,20 @@ class XmlLayoutTranslatorTest(unittest.TestCase):
             self.assertEqual(page_to_layout_file(root, "pages/FeedBack").name, "feedback.xml")
             self.assertIsNone(page_to_layout_file(root, "pages/Nonexistent"))
 
+    def test_page_to_layout_finds_nonstandard_resource_dir(self):
+        # layouts in a custom resource root (e.g. res/common/layout) must still map,
+        # else the whole app skips LLM refine and degrades to placeholders (TouTiao case)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            layout_dir = root / "src" / "main" / "res" / "common" / "layout"
+            layout_dir.mkdir(parents=True)
+            (layout_dir / "activity_main.xml").write_text("<x/>", encoding="utf-8")
+            (layout_dir / "activity_news_detail.xml").write_text("<x/>", encoding="utf-8")
+            self.assertEqual(page_to_layout_file(root, "pages/MainActivity").name, "activity_main.xml")
+            self.assertEqual(
+                page_to_layout_file(root, "pages/NewsDetailActivity").name, "activity_news_detail.xml"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
