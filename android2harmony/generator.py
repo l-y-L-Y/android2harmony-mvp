@@ -17,6 +17,22 @@ from .pipeline import build_agent_pipeline
 from .xml_layout_translator import load_android_strings, page_to_layout_file, translate_layout_file
 
 
+def _hosted_fragments(activity_source: str, page_names: set[str], self_name: str) -> list[str]:
+    """Page names of fragments an Activity loads (e.g. `new HomeFragment()`), in source order,
+    restricted to those generated as pages. Returns the PAGE name to embed: the class `HomeFragment`
+    maps to layout `fragment_home` -> page `FragmentHome` (reversed words), so resolve both spellings.
+    The first is the default tab/content, so the shell page can embed it instead of an empty container."""
+    ordered: list[str] = []
+    for m in re.finditer(r"\bnew\s+([A-Z]\w*Fragment)\s*\(", activity_source):
+        cls = m.group(1)
+        base = cls[: -len("Fragment")]  # HomeFragment -> Home
+        for cand in (cls, "Fragment" + base):  # HomeFragment or FragmentHome
+            if cand in page_names and cand != self_name and cand not in ordered:
+                ordered.append(cand)
+                break
+    return ordered
+
+
 def generate_harmony_project(
     project: AndroidProject,
     issues: list[MigrationIssue],
@@ -102,6 +118,7 @@ def generate_harmony_project(
     write("entry/src/main/ets/platform/AndroidApiCompat.ets", _android_api_compat_ets(project))
     app_label = android_strings.get("app_name") or project.name
     available_media = _available_media_names(project)
+    page_names = {r.split("/")[-1] for r in pipeline.routes}  # fragments now generated as pages
     # (route, page_name, source_kind, source_path)
     llm_jobs: list[tuple[str, str, str, Path]] = []
     placeholder_pages: list[str] = []  # routes with no Android source to migrate from
@@ -144,6 +161,16 @@ def generate_harmony_project(
                     "tabs/ViewPager fragments, list data and click behavior live here - reproduce THIS, "
                     "not just the empty XML container. -->\n```kotlin\n" + code_src + "\n```"
                 )
+                hosted = _hosted_fragments(code_src, page_names, page_name)
+                if hosted:
+                    source += (
+                        f"\n\n<!-- IMPORTANT: this screen is a shell that hosts these fragments, "
+                        f"each ALREADY generated as a sibling ArkUI component you call directly with no "
+                        f"import needed, e.g. `{hosted[0]}()`: {', '.join(hosted)}. The XML container "
+                        f"(ViewPager / FrameLayout / fragment slot) is EMPTY on purpose - you MUST embed "
+                        f"these fragment components inside it (show `{hosted[0]}()` by default and switch "
+                        f"to the others on the bottom tabs / ViewPager index), or the screen renders blank. -->"
+                    )
         try:
             code = generate_arkui_page(
                 page_name=page_name, layout_source=source, app_label=app_label,

@@ -256,7 +256,7 @@ def _discover_routes(module: AndroidModule | None) -> list[str]:
         return ["pages/Index"]
     routes = ["pages/Index"]
     seen = {route.lower() for route in routes}
-    from .xml_layout_translator import page_to_layout_file
+    from .xml_layout_translator import page_to_layout_file, _module_layout_dirs
     claimed_layouts: set[str] = set()
     if module.manifest and module.manifest.exists():
         for page in _discover_manifest_routes(module.manifest):
@@ -268,18 +268,20 @@ def _discover_routes(module: AndroidModule | None) -> list[str]:
                 claimed = page_to_layout_file(module.path, route)
                 if claimed:
                     claimed_layouts.add(claimed.stem.lower())
-    for layout_dir in [module.path / "src" / "main" / "res" / "layout", module.path / "res" / "layout"]:
-        if layout_dir.exists():
-            for layout in sorted(layout_dir.glob("*.xml")):
-                # Skip reusable sub-components (list rows, headers, dialogs, nav items);
-                # they are not screens. Skip layouts already owned by a manifest activity.
-                if _is_component_layout(layout.stem) or layout.stem.lower() in claimed_layouts:
-                    continue
-                route = f"pages/{_page_name(layout.stem)}"
-                key = route.lower()
-                if key not in seen:
-                    routes.append(route)
-                    seen.add(key)
+    # Scan every layout dir (incl. custom resource roots like res/home/layout) so the
+    # content-bearing fragments behind an Activity shell become real pages, not just the
+    # ones in standard res/layout. fragment_*/activity_* layouts are screens.
+    for layout_dir in _module_layout_dirs(str(module.path)):
+        for layout in sorted(layout_dir.glob("*.xml")):
+            # Skip reusable sub-components (list rows, headers, dialogs, includes);
+            # they are not screens. Skip layouts already owned by a manifest activity.
+            if _is_component_layout(layout.stem) or layout.stem.lower() in claimed_layouts:
+                continue
+            route = f"pages/{_page_name(layout.stem)}"
+            key = route.lower()
+            if key not in seen:
+                routes.append(route)
+                seen.add(key)
     for source in module.source_files:
         text = source.read_text(encoding="utf-8", errors="ignore")
         for match in re.finditer(r"composable\(['\"]([^'\"]+)['\"]", text):
@@ -355,6 +357,8 @@ def _is_component_layout(stem: str) -> bool:
     """A reusable sub-component layout (list row, header, dialog, nav item) - not a screen.
     Screens (activity_*/fragment_*/*_fragment) are always kept."""
     s = stem.lower()
+    if s.startswith("include_"):  # <include> targets are reusable fragments of a screen
+        return True
     if s.startswith("activity_") or s.startswith("fragment_") or s.endswith("_fragment"):
         return False
     return any(marker in s for marker in _COMPONENT_MARKERS)
