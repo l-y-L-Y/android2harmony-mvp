@@ -109,6 +109,18 @@ def build_parser() -> argparse.ArgumentParser:
     metrics_p = sub.add_parser("metrics", help="Score generated pages for blank/placeholder content (silent fidelity loss).")
     metrics_p.add_argument("project", type=Path)
 
+    diff_p = sub.add_parser("diff-report", help="Compare an Android project against its generated HarmonyOS project (coverage/strings/media/API).")
+    diff_p.add_argument("android", type=Path)
+    diff_p.add_argument("harmony", type=Path)
+
+    verify_rt = sub.add_parser("verify-runtime", help="Install+launch the built HAP, catch runtime crashes, and LLM-repair until it launches clean.")
+    verify_rt.add_argument("project", type=Path)
+    verify_rt.add_argument("--bundle", required=True, help="bundleName from AppScope/app.json5")
+    verify_rt.add_argument("--ability", default="EntryAbility")
+    verify_rt.add_argument("--target", default="127.0.0.1:5555")
+    verify_rt.add_argument("--hdc", type=Path, default=Path("D:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
+    verify_rt.add_argument("--max-iters", type=int, default=3)
+
     batch = sub.add_parser("batch-convert", help="Convert every Gradle Android project under a directory.")
     batch.add_argument("input_root", type=Path)
     batch.add_argument("--output-root", "-o", type=Path, required=True)
@@ -211,6 +223,29 @@ def main(argv: list[str] | None = None) -> int:
                 "richRatio": report["richRatio"],
             }, ensure_ascii=False, indent=2))
             return 0
+
+        if args.command == "diff-report":
+            from .diff_report import write_diff_report
+            d = write_diff_report(args.android, args.harmony)
+            print(json.dumps({
+                "screens": d["screens"], "blankLikePages": d["blankLikePages"],
+                "strings": d["strings"], "media": d["media"], "apiByStatus": d["apiByStatus"],
+            }, ensure_ascii=False, indent=2))
+            return 0
+
+        if args.command == "verify-runtime":
+            from .runtime_verify import runtime_verify_and_repair
+            result = runtime_verify_and_repair(
+                args.project, args.bundle, ability=args.ability, target=args.target,
+                hdc=args.hdc, max_iters=args.max_iters, log_sink=lambda m: print(m, flush=True),
+            )
+            print(json.dumps({
+                "launchedClean": result.launched_clean,
+                "iterations": result.iterations,
+                "repairedFiles": result.repaired_files,
+                "lastCrash": result.last_crash,
+            }, ensure_ascii=False, indent=2))
+            return 0 if result.launched_clean else 1
 
         if args.command == "emulator-diagnose":
             result = run_emulator_diagnostic(

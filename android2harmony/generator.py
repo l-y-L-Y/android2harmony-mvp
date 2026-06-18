@@ -86,7 +86,8 @@ def generate_harmony_project(
     write("entry/hvigorfile.ts", ENTRY_HVIGORFILE)
     write("entry/obfuscation-rules.txt", "# Generated placeholder for release obfuscation rules.\n")
     write("entry/build-profile.json5", _entry_build_profile())
-    write("entry/src/main/module.json5", _module_json(app_module, project.name))
+    uses_mediastore = _uses_mediastore(project)
+    write("entry/src/main/module.json5", _module_json(app_module, project.name, uses_mediastore))
     compose_screens = discover_compose_screens(app_module) if app_module else {}
     initial_route = _choose_initial_route(pipeline.routes, app_module, compose_screens)
     write("entry/src/main/ets/entryability/EntryAbility.ets", _entry_ability(initial_route))
@@ -116,6 +117,10 @@ def generate_harmony_project(
     write("entry/src/main/ets/state/MigratedStores.ets", _state_stores_ets(project))
     write("entry/src/main/ets/routes/RouteMap.ets", _route_map_ets(pipeline.routes))
     write("entry/src/main/ets/platform/AndroidApiCompat.ets", _android_api_compat_ets(project))
+    if uses_mediastore:
+        # System-level API mapping: Android MediaStore (device photo/video library) ->
+        # HarmonyOS photoAccessHelper. Real Kit code, not mock; the gallery binds to it.
+        write("entry/src/main/ets/platform/MediaStoreCompat.ets", _media_store_compat_ets())
     app_label = android_strings.get("app_name") or project.name
     available_media = _available_media_names(project)
     page_names = {r.split("/")[-1] for r in pipeline.routes}  # fragments now generated as pages
@@ -769,8 +774,102 @@ def _json5(data: dict) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
-def _module_json(module: AndroidModule | None, project_name: str) -> str:
+_MEDIASTORE_PAT = re.compile(
+    r"MediaStore\.(Images|Video|Files|Audio)\b|EXTERNAL_CONTENT_URI|MediaStore\.Images\.Media"
+)
+
+
+def _uses_mediastore(project: AndroidProject) -> bool:
+    """True if the app reads the device media library via Android MediaStore (a system-level
+    data API). That maps to HarmonyOS photoAccessHelper, so we emit the real adapter + permission."""
+    for module in project.modules:
+        for src in module.source_files:
+            try:
+                if _MEDIASTORE_PAT.search(src.read_text(encoding="utf-8", errors="ignore")):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _media_store_compat_ets() -> str:
+    """Real HarmonyOS code mapping Android MediaStore image/video reads -> photoAccessHelper.
+    The generated gallery binds to MediaStoreCompat.loadMedia() instead of a mock array, so it
+    reads the actual device photo library (system-level API, no backend)."""
+    return """// Android MediaStore (device photo/video library) -> HarmonyOS photoAccessHelper.
+// Reads the real on-device gallery; no backend, no mock.
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { dataSharePredicates } from '@kit.ArkData';
+import { abilityAccessCtrl, common } from '@kit.AbilityKit';
+
+export interface DeviceMedia {
+  uri: string;
+  name: string;
+  isVideo: boolean;
+}
+
+export class MediaStoreCompat {
+  // Equivalent of requesting READ permission before querying MediaStore.
+  static async ensurePermission(context: common.UIAbilityContext): Promise<void> {
+    try {
+      const mgr = abilityAccessCtrl.createAtManager();
+      await mgr.requestPermissionsFromUser(context, ['ohos.permission.READ_IMAGEVIDEO']);
+    } catch (e) {
+    }
+  }
+
+  // Equivalent of ContentResolver.query(MediaStore...EXTERNAL_CONTENT_URI).
+  static async loadMedia(context: common.UIAbilityContext): Promise<DeviceMedia[]> {
+    const list: DeviceMedia[] = [];
+    try {
+      await MediaStoreCompat.ensurePermission(context);
+      const helper = photoAccessHelper.getPhotoAccessHelper(context);
+      const predicates = new dataSharePredicates.DataSharePredicates();
+      const options: photoAccessHelper.FetchOptions = {
+        fetchColumns: [],
+        predicates: predicates
+      };
+      const result = await helper.getAssets(options);
+      const count = result.getCount();
+      for (let i = 0; i < count; i++) {
+        const asset = await result.getObjectAtPosition(i);
+        list.push({
+          uri: asset.uri,
+          name: asset.displayName,
+          isVideo: asset.photoType === photoAccessHelper.PhotoType.VIDEO
+        });
+      }
+      result.close();
+    } catch (e) {
+    }
+    return list;
+  }
+}
+"""
+
+
+def _module_json(module: AndroidModule | None, project_name: str, uses_mediastore: bool = False) -> str:
     label = project_name
+    request_permissions = [
+        {
+            "name": "ohos.permission.INTERNET",
+            "reason": "$string:permission_internet_reason",
+            "usedScene": {
+                "abilities": ["EntryAbility"],
+                "when": "inuse",
+            },
+        }
+    ]
+    if uses_mediastore:
+        # Android MediaStore device-photo access -> HarmonyOS READ_IMAGEVIDEO.
+        request_permissions.append({
+            "name": "ohos.permission.READ_IMAGEVIDEO",
+            "reason": "$string:permission_read_media_reason",
+            "usedScene": {
+                "abilities": ["EntryAbility"],
+                "when": "inuse",
+            },
+        })
     return _json5(
         {
             "module": {
@@ -782,16 +881,7 @@ def _module_json(module: AndroidModule | None, project_name: str) -> str:
                 "deliveryWithInstall": True,
                 "installationFree": False,
                 "pages": "$profile:main_pages",
-                "requestPermissions": [
-                    {
-                        "name": "ohos.permission.INTERNET",
-                        "reason": "$string:permission_internet_reason",
-                        "usedScene": {
-                            "abilities": ["EntryAbility"],
-                            "when": "inuse",
-                        },
-                    }
-                ],
+                "requestPermissions": request_permissions,
                 "abilities": [
                     {
                         "name": "EntryAbility",
@@ -1896,6 +1986,7 @@ def _strings_json(module: AndroidModule | None, project_name: str) -> str:
             {"name": "EntryAbility_label", "value": project_name},
             {"name": "app_name", "value": project_name},
             {"name": "permission_internet_reason", "value": "Load migrated network data and images"},
+            {"name": "permission_read_media_reason", "value": "Read device photos and videos to display"},
         ]
     }
     if module:

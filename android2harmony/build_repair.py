@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from . import repair_cache
 from .knowledge import ARKTS_RULES, attribute_hints_for_errors
 from .llm_page_agent import ARKUI_RULES, apply_arkts_fixups, _ensure_single_entry
 from .llm_provider import call_llm, extract_code_block
@@ -281,6 +282,12 @@ def repair_file(
     call = call_fn or call_llm
     content = path.read_text(encoding="utf-8", errors="ignore")
     struct = _struct_name(content)
+    # Learning cache: replay a previously build-confirmed fix for this exact (file, errors, content)
+    # instead of calling the (non-deterministic) model again.
+    cached = repair_cache.lookup(path.name, errors, content)
+    if cached is not None and _balanced(cached) and (not struct or f"struct {struct}" in cached):
+        path.write_text(cached, encoding="utf-8")
+        return True
     prompt = build_repair_prompt(path.name, content, errors, escalate=escalate)
     system = "You are a senior HarmonyOS ArkUI engineer fixing compile errors. Return only the corrected .ets file."
     fixed = apply_arkts_fixups(extract_code_block(call(prompt, system, max_tokens)))
@@ -294,6 +301,7 @@ def repair_file(
     if struct and f"struct {struct}" not in fixed:
         return False
     path.write_text(fixed, encoding="utf-8")
+    repair_cache.stage(path.name, errors, content, fixed)  # committed only if the build later passes
     return True
 
 
@@ -310,6 +318,7 @@ def repair_build(
     repaired: list[str] = []
     initial = -1
     log = ""
+    repair_cache.discard()  # clear any fixes staged by a prior (failed) run in this process
 
     def emit(msg: str) -> None:
         if log_sink:
@@ -336,6 +345,9 @@ def repair_build(
             initial = total
         emit(f"[iter {it}] build {'OK' if ok else 'FAIL'} - {total} errors across {len(errors)} files")
         if ok:
+            learned = repair_cache.commit()  # validation gate: only build-confirmed fixes are learned
+            if learned:
+                emit(f"[cache] learned {learned} validated repair(s)")
             return RepairResult(True, it, initial, 0, repaired, log[-2000:])
         if not errors:
             # build failed but no parseable ets errors. Most often this is the
@@ -419,5 +431,9 @@ def repair_build(
         ok, log = run_hvigor_build(project_dir, hvigorw, node_home, sdk_home)
         errors = parse_build_errors(log)
     total = sum(len(v) for v in errors.values())
+    if ok:
+        repair_cache.commit()  # build-confirmed (incl. via guarantee stubs) -> learn the fixes
+    else:
+        repair_cache.discard()
     emit(f"[final] build {'OK' if ok else 'FAIL'} - {total} errors" + (f"; {len(stubbed)} pages degraded to keep build green" if stubbed else ""))
     return RepairResult(ok, max_iters, initial, total, repaired, log[-2000:], remaining=errors)
