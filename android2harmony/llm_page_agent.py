@@ -60,6 +60,11 @@ def _navigation_section(page_name: str, routes: list[str] | None) -> str:
         f"real jump - add `import {{ router }} from '@kit.ArkUI';` and call `router.pushUrl({{ url: 'pages/Target' }})`, "
         f"choosing the best-matching page name from that list (a list of items -> the matching *Detail/*Fragment page; "
         f"a tab/nav entry -> the page whose name matches its label). Use `router.back()` for back/up arrows.\n"
+        f"- Pass identity on item taps: when a grid/list item opens a DETAIL or VIEWER page for THAT specific item "
+        f"(a photo/video, a row, an article), send its identifying data as params, e.g. "
+        f"`router.pushUrl({{ url: 'pages/Target', params: {{ uri: item.uri, name: item.name }} }})`. A detail/viewer "
+        f"page MUST read them - `const p = router.getParams() as Record<string, string>;` in `aboutToAppear` - and "
+        f"render THAT item (e.g. `Image(p.uri)`), never a hardcoded or random one. Without this the detail page opens blank.\n"
     )
 
 

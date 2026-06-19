@@ -33,6 +33,25 @@ def _hosted_fragments(activity_source: str, page_names: set[str], self_name: str
     return ordered
 
 
+def _page_source_kind(app_module, page_name: str, route: str, compose_screens: dict):
+    """Decide how a route's page is generated, returning (source_kind, source_path):
+    - ("xml", layout_path)  : a matching Android XML layout exists
+    - ("compose", src_path) : a Jetpack Compose screen
+    - ("code", None)        : NO layout/Compose, but a real code-driven screen (e.g. a
+                              fullscreen photo/video viewer built entirely in Kotlin) - feed
+                              its Activity/Fragment source so we render it, not a placeholder
+    - (None, None)          : nothing to migrate from -> caller emits a placeholder page
+    """
+    layout_file = page_to_layout_file(app_module.path, route) if app_module else None
+    if layout_file:
+        return "xml", layout_file
+    if page_name in compose_screens:
+        return "compose", compose_screens[page_name]
+    if app_module and len((find_screen_source(app_module, page_name) or "").strip()) >= 200:
+        return "code", None
+    return None, None
+
+
 def generate_harmony_project(
     project: AndroidProject,
     issues: list[MigrationIssue],
@@ -131,12 +150,8 @@ def generate_harmony_project(
         if route == "pages/Index":
             continue
         page_name = route.split("/")[-1]
-        layout_file = page_to_layout_file(app_module.path, route) if app_module else None
-        if layout_file:
-            source_kind, source_path = "xml", layout_file
-        elif page_name in compose_screens:
-            source_kind, source_path = "compose", compose_screens[page_name]
-        else:
+        source_kind, source_path = _page_source_kind(app_module, page_name, route, compose_screens)
+        if source_kind is None:
             write(f"entry/src/main/ets/{route}.ets", _generated_page_ets(route, project.name, pipeline.routes))
             placeholder_pages.append(route)
             continue
@@ -154,6 +169,26 @@ def generate_harmony_project(
         if source_kind == "compose":
             source = compose_screen_source(source_path)
             string_hints = ""
+        elif source_kind == "code":
+            # Code-driven screen with no XML layout: feed the Activity/Fragment source
+            # directly so the model reproduces the real UI instead of a placeholder.
+            code_src = find_screen_source(app_module, page_name) if app_module else ""
+            source = (
+                "<!-- This screen has NO XML layout - its UI is built entirely in code "
+                "(e.g. a fullscreen photo/video viewer, a custom view, a ViewPager of fragments). "
+                "Reproduce the ACTUAL screen from this Activity/Fragment source below - render its real "
+                "content (images, player, lists, gestures), NEVER a 'no layout' placeholder. -->\n\n"
+                + code_src
+            )
+            string_hints = ""
+            hosted = _hosted_fragments(code_src, page_names, page_name)
+            if hosted:
+                source += (
+                    f"\n\n<!-- IMPORTANT: this screen hosts these fragments, each ALREADY generated as a "
+                    f"sibling ArkUI component you call directly with no import, e.g. `{hosted[0]}()`: "
+                    f"{', '.join(hosted)}. Embed them inline (show `{hosted[0]}()` by default, switch on tabs/ViewPager)."
+                    f" -->"
+                )
         else:
             source = _expand_layout_sources(source_path)
             string_hints = _layout_string_hints(source, android_strings)
