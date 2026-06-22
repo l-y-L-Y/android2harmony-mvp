@@ -21,9 +21,9 @@ from .llm_page_agent import ARKUI_RULES, apply_arkts_fixups, _ensure_single_entr
 from .llm_provider import call_llm, extract_code_block
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-DEFAULT_HVIGORW = Path("D:/DevEco Studio/tools/hvigor/bin/hvigorw.bat")
-DEFAULT_NODE_HOME = Path("D:/DevEco Studio/tools/node")
-DEFAULT_SDK_HOME = Path("D:/DevEco Studio/sdk")
+DEFAULT_HVIGORW = Path("F:/DevEco Studio/tools/hvigor/bin/hvigorw.bat")
+DEFAULT_NODE_HOME = Path("F:/DevEco Studio/tools/node")
+DEFAULT_SDK_HOME = Path("F:/DevEco Studio/sdk")
 
 
 @dataclass
@@ -46,7 +46,7 @@ def run_hvigor_build(
 ) -> tuple[bool, str]:
     env = dict(os.environ)
     env["DEVECO_SDK_HOME"] = str(sdk_home)
-    # PowerShell's call operator handles the spaced "D:\DevEco Studio\..." paths
+    # PowerShell's call operator handles the spaced "F:\DevEco Studio\..." paths
     # reliably, where cmd.exe quote-stripping does not.
     ps = f'& "{hvigorw}" assembleApp --node-home "{node_home}" --no-daemon'
     try:

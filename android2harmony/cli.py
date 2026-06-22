@@ -70,14 +70,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = sub.add_parser("validate-device", help="Install and launch the generated HarmonyOS app on an hdc target.")
     validate.add_argument("project", type=Path)
-    validate.add_argument("--hdc", type=Path, default=Path("D:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
+    validate.add_argument("--hdc", type=Path, default=Path("F:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
     validate.add_argument("--bundle", default="com.generated.simplegallery")
     validate.add_argument("--ability", default="EntryAbility")
     validate.add_argument("--click-text", help="Optional UITest text target to click after launch.")
 
     validate_dsl = sub.add_parser("validate-dsl", help="Run generated UITest DSL on an hdc target and write repair input.")
     validate_dsl.add_argument("project", type=Path)
-    validate_dsl.add_argument("--hdc", type=Path, default=Path("D:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
+    validate_dsl.add_argument("--hdc", type=Path, default=Path("F:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
     validate_dsl.add_argument("--bundle", default="com.generated.simplegallery")
     validate_dsl.add_argument("--ability", default="EntryAbility")
     validate_dsl.add_argument("--dsl", type=Path, help="Optional path to test-dsl.json.")
@@ -97,8 +97,8 @@ def build_parser() -> argparse.ArgumentParser:
     report_index.add_argument("project", type=Path)
 
     emulator = sub.add_parser("emulator-diagnose", help="Discover/start a DevEco emulator instance and wait for hdc.")
-    emulator.add_argument("--emulator", type=Path, default=Path("D:/DevEco Studio/tools/emulator/Emulator.exe"))
-    emulator.add_argument("--hdc", type=Path, default=Path("D:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
+    emulator.add_argument("--emulator", type=Path, default=Path("F:/DevEco Studio/tools/emulator/Emulator.exe"))
+    emulator.add_argument("--hdc", type=Path, default=Path("F:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
     emulator.add_argument("--name", help="Optional DevEco emulator instance name.")
     emulator.add_argument("--wait-seconds", type=int, default=60)
     emulator.add_argument("--hdc-port", type=int, default=15000)
@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_rt.add_argument("--bundle", required=True, help="bundleName from AppScope/app.json5")
     verify_rt.add_argument("--ability", default="EntryAbility")
     verify_rt.add_argument("--target", default="127.0.0.1:5555")
-    verify_rt.add_argument("--hdc", type=Path, default=Path("D:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
+    verify_rt.add_argument("--hdc", type=Path, default=Path("F:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe"))
     verify_rt.add_argument("--max-iters", type=int, default=3)
 
     batch = sub.add_parser("batch-convert", help="Convert every Gradle Android project under a directory.")

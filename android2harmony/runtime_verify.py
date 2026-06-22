@@ -21,7 +21,7 @@ from typing import Callable
 from .build_repair import DEFAULT_HVIGORW, DEFAULT_NODE_HOME, DEFAULT_SDK_HOME, parse_build_errors, repair_file, run_hvigor_build
 from .llm_page_agent import build_page_prompt  # noqa: F401  (kept for parity with compile repair)
 
-DEFAULT_HDC = Path("D:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe")
+DEFAULT_HDC = Path("F:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe")
 DEFAULT_TARGET = "127.0.0.1:5555"
 FAULTLOG_DIR = "/data/log/faultlog/faultlogger"
 

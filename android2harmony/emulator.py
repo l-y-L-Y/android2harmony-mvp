@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_EMULATOR = Path("D:/DevEco Studio/tools/emulator/Emulator.exe")
-DEFAULT_HDC = Path("D:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe")
+DEFAULT_EMULATOR = Path("F:/DevEco Studio/tools/emulator/Emulator.exe")
+DEFAULT_HDC = Path("F:/DevEco Studio/sdk/default/openharmony/toolchains/hdc.exe")
 DEFAULT_DEPLOYED = Path.home() / "AppData" / "Local" / "Huawei" / "Emulator" / "deployed"
 DEFAULT_IMAGE_ROOT = Path.home() / "AppData" / "Local" / "Huawei" / "Sdk"
 
