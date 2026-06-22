@@ -48,7 +48,7 @@
     {
       "id": "key_value",
       "title_cn": "键值存储 (SharedPreferences)",
-      "android_detect": ["SharedPreferences", "getSharedPreferences", "PreferenceManager"],
+      "android_detect": ["SharedPreferences", "getSharedPreferences", "PreferenceManager", "DataStore", "preferencesDataStore", "androidx.datastore"],
       "android_apis": ["SharedPreferences.getString/edit().putX"],
       "harmony_kit": "@kit.ArkData",
       "harmony_symbols": ["preferences.getPreferences", "Preferences.put/get/flush"],
