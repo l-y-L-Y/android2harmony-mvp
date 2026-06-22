@@ -1860,6 +1860,52 @@ export class JsonTypeConverter {{
 """
 
 
+STANDARD_DAO_METHODS = '''  private tableName: string = '__TABLE__';
+  private dbContext?: common.Context;
+
+  setContext(context: common.Context): void {
+    this.dbContext = context;
+  }
+
+  private async ensureStore(): Promise<void> {
+    if (this.store || !this.dbContext) {
+      return;
+    }
+    try {
+      const s = new RelationalStoreAdapter();
+      await s.open(this.dbContext);
+      this.store = s;
+    } catch (err) { }
+  }
+
+  async persistRow(value: Object): Promise<void> {
+    await this.ensureStore();
+    if (this.store && this.tableName.length > 0) {
+      const ok = await this.store.insertRow(this.tableName, value);
+      if (ok) { return; }
+    }
+    this.rows.push(value);
+  }
+
+  async queryAll(): Promise<Object[]> {
+    await this.ensureStore();
+    if (this.store && this.tableName.length > 0) {
+      const rs = await this.store.querySql('SELECT * FROM ' + this.tableName, []);
+      if (rs) { return resultSetToRows(rs); }
+    }
+    return this.rows;
+  }
+
+  async deleteRow(idField: string, idValue: ValueType): Promise<void> {
+    await this.ensureStore();
+    if (this.store && this.tableName.length > 0) {
+      await this.store.deleteBy(this.tableName, idField, idValue);
+    }
+    this.rows = this.rows.filter((r: Object) => (r as Record<string, ValueType>)[idField] !== idValue);
+  }
+'''
+
+
 def _dao_adapters_ets(project: AndroidProject) -> str:
     entities = _discover_room_entities(project)
     dao_blocks: list[str] = []
@@ -1876,13 +1922,13 @@ def _dao_adapters_ets(project: AndroidProject) -> str:
                 entity_name = _dao_param_entity_name(params)
                 if "List<" in params or "MutableList<" in params:
                     methods.append(f"""  async {name}(values: Object[]): Promise<void> {{
-    values.forEach((item: Object) => {{
-      this.rows.push(item);
-    }});
+    for (const item of values) {{
+      await this.persistRow(item);
+    }}
   }}""")
                 else:
                     methods.append(f"""  async {name}(value: Object): Promise<void> {{
-    this.rows.push(value);
+    await this.persistRow(value);
   }}""")
             for sql, name, params in queries:
                 table = _sql_table(sql)
@@ -1895,6 +1941,9 @@ def _dao_adapters_ets(project: AndroidProject) -> str:
   }}""")
             if not methods:
                 methods.append("  async queryAll(): Promise<Object[]> {\n    return this.rows;\n  }")
+            primary_table = next((_sql_table(s) for s, _qn, _qp in queries if _sql_table(s)), "")
+            standard_methods = STANDARD_DAO_METHODS.replace("__TABLE__", _escape(primary_table))
+            methods = [m for m in methods if "async queryAll(" not in m]
             dao_blocks.append(f"""export class {class_name}Adapter {{
   private rows: Object[] = [];
   private store?: RelationalStoreAdapter;
@@ -1903,6 +1952,7 @@ def _dao_adapters_ets(project: AndroidProject) -> str:
     this.store = store;
   }}
 
+{standard_methods}
 """ + "\n\n".join(methods) + """
 
   private async query(sql: string, args: ValueType[], table: string): Promise<Object[]> {
@@ -1991,6 +2041,7 @@ def _dao_adapters_ets(project: AndroidProject) -> str:
         dao_blocks.append("export class MigratedDaoAdapter {\n  async queryAll(): Promise<Object[]> {\n    return [];\n  }\n}")
     return """/* Generated from Room @Dao interfaces. */
 import { relationalStore } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
 import { RelationalStoreAdapter } from './RelationalStoreAdapter';
 
 type ValueType = relationalStore.ValueType;
@@ -2073,6 +2124,30 @@ export class RelationalStoreAdapter {
     } catch (err) {
       this.lastError = JSON.stringify(err);
       return undefined;
+    }
+  }
+
+  async insertRow(table: string, values: Object): Promise<boolean> {
+    if (!this.store) { return false; }
+    try {
+      const rowId = await this.store.insert(table, values as relationalStore.ValuesBucket);
+      this.lastError = '';
+      return rowId >= 0;
+    } catch (err) {
+      this.lastError = JSON.stringify(err);
+      return false;
+    }
+  }
+
+  async deleteBy(table: string, field: string, value: relationalStore.ValueType): Promise<void> {
+    if (!this.store) { return; }
+    try {
+      const predicates = new relationalStore.RdbPredicates(table);
+      predicates.equalTo(field, value);
+      await this.store.delete(predicates);
+      this.lastError = '';
+    } catch (err) {
+      this.lastError = JSON.stringify(err);
     }
   }
 
