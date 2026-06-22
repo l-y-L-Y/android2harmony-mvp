@@ -36,10 +36,13 @@ class SystemApiMapTest(unittest.TestCase):
         self.assertIn("ohos.permission.ACTIVITY_MOTION", perms)
         self.assertTrue(all(p.startswith("ohos.permission.") and " " not in p for p in perms))
 
-    def test_coverage_reports_done_and_planned(self):
+    def test_coverage_reports_done_and_compiled(self):
         cov = m.coverage()
+        # device-verified capabilities
         self.assertIn("图片/视频库", cov.get("done", []))
-        self.assertTrue(len(cov.get("planned", [])) >= 15)
+        self.assertIn("录音/音频采集", cov.get("done", []))
+        # the bulk of capabilities have a real adapter that compiles against the SDK
+        self.assertGreaterEqual(len(cov.get("compiled", [])), 10)
 
 
 if __name__ == "__main__":

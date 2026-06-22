@@ -47,6 +47,13 @@ class MediaStoreMappingTest(unittest.TestCase):
         # still valid json (parse the module config)
         json.loads(with_media)
 
+    def test_module_json_injects_arbitrary_capability_permissions(self):
+        # the generalized path: permissions from system_api_map flow into module.json5
+        out = _module_json(None, "App", permissions=["ohos.permission.MICROPHONE"])
+        self.assertIn("ohos.permission.MICROPHONE", out)
+        self.assertNotIn("ohos.permission.READ_IMAGEVIDEO", out)
+        json.loads(out)
+
 
 if __name__ == "__main__":
     unittest.main()

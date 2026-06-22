@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from . import system_api_map
 from .compose import compose_screen_source, discover_compose_screens
 from .screen_source import find_screen_source
 from .llm_agents import LLMAgentCall, LLMAgentRunner, LLMRefineOptions, enhance_artifact_with_llm, refine_arkui_page_with_llm
@@ -105,8 +106,10 @@ def generate_harmony_project(
     write("entry/hvigorfile.ts", ENTRY_HVIGORFILE)
     write("entry/obfuscation-rules.txt", "# Generated placeholder for release obfuscation rules.\n")
     write("entry/build-profile.json5", _entry_build_profile())
-    uses_mediastore = _uses_mediastore(project)
-    write("entry/src/main/module.json5", _module_json(app_module, project.name, uses_mediastore))
+    detected_caps = _detect_capabilities(project)
+    uses_mediastore = "photos_video" in detected_caps
+    cap_permissions = system_api_map.permissions_for(detected_caps)
+    write("entry/src/main/module.json5", _module_json(app_module, project.name, uses_mediastore, cap_permissions))
     compose_screens = discover_compose_screens(app_module) if app_module else {}
     initial_route = _choose_initial_route(pipeline.routes, app_module, compose_screens)
     write("entry/src/main/ets/entryability/EntryAbility.ets", _entry_ability(initial_route))
@@ -136,10 +139,14 @@ def generate_harmony_project(
     write("entry/src/main/ets/state/MigratedStores.ets", _state_stores_ets(project))
     write("entry/src/main/ets/routes/RouteMap.ets", _route_map_ets(pipeline.routes))
     write("entry/src/main/ets/platform/AndroidApiCompat.ets", _android_api_compat_ets(project))
-    if uses_mediastore:
-        # System-level API mapping: Android MediaStore (device photo/video library) ->
-        # HarmonyOS photoAccessHelper. Real Kit code, not mock; the gallery binds to it.
-        write("entry/src/main/ets/platform/MediaStoreCompat.ets", _media_store_compat_ets())
+    # System-level API mapping: for every detected device capability, emit the REAL HarmonyOS
+    # Kit adapter into platform/ (e.g. MediaStore->photoAccessHelper, MediaRecorder->AVRecorder).
+    # Screens bind to these adapters instead of mocking the capability.
+    for cid in detected_caps:
+        adapter = _CAPABILITY_ADAPTERS.get(cid)
+        if adapter:
+            module_name, emitter = adapter
+            write(f"entry/src/main/ets/platform/{module_name}.ets", emitter())
     app_label = android_strings.get("app_name") or project.name
     available_media = _available_media_names(project)
     page_names = {r.split("/")[-1] for r in pipeline.routes}  # fragments now generated as pages
@@ -883,23 +890,564 @@ export class MediaStoreCompat {
 """
 
 
-def _module_json(module: AndroidModule | None, project_name: str, uses_mediastore: bool = False) -> str:
-    label = project_name
-    request_permissions = [
-        {
-            "name": "ohos.permission.INTERNET",
-            "reason": "$string:permission_internet_reason",
-            "usedScene": {
-                "abilities": ["EntryAbility"],
-                "when": "inuse",
-            },
+def _audio_recorder_compat_ets() -> str:
+    """Real HarmonyOS code mapping Android MediaRecorder/AudioRecord -> @kit.MediaKit AVRecorder.
+    Records the device microphone to a sandbox file; no backend, no mock. A migrated recorder
+    screen binds its record/stop buttons to AudioRecorderCompat instead of a fake timer."""
+    return """// Android MediaRecorder / AudioRecord -> HarmonyOS AVRecorder (@kit.MediaKit).
+// Records the real microphone to an app-sandbox .m4a file. No backend, no mock.
+import { media } from '@kit.MediaKit';
+import { abilityAccessCtrl, common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
+
+export class AudioRecorderCompat {
+  private recorder: media.AVRecorder | undefined = undefined;
+  private fd: number = -1;
+  public filePath: string = '';
+
+  // Equivalent of requesting RECORD_AUDIO before MediaRecorder.start().
+  static async ensurePermission(context: common.UIAbilityContext): Promise<boolean> {
+    try {
+      const mgr = abilityAccessCtrl.createAtManager();
+      const res = await mgr.requestPermissionsFromUser(context, ['ohos.permission.MICROPHONE']);
+      return res.authResults.every((x: number) => x === 0);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Equivalent of MediaRecorder.setOutputFile + prepare + start.
+  async start(context: common.UIAbilityContext, fileName: string = ''): Promise<string> {
+    await AudioRecorderCompat.ensurePermission(context);
+    const name: string = fileName.length > 0 ? fileName : `REC_${Date.now()}.m4a`;
+    this.filePath = `${context.filesDir}/${name}`;
+    const file = fileIo.openSync(this.filePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+    this.fd = file.fd;
+    this.recorder = await media.createAVRecorder();
+    const profile: media.AVRecorderProfile = {
+      audioBitrate: 100000,
+      audioChannels: 2,
+      audioCodec: media.CodecMimeType.AUDIO_AAC,
+      audioSampleRate: 48000,
+      fileFormat: media.ContainerFormatType.CFT_MPEG_4A
+    };
+    const config: media.AVRecorderConfig = {
+      audioSourceType: media.AudioSourceType.AUDIO_SOURCE_TYPE_MIC,
+      profile: profile,
+      url: `fd://${this.fd}`
+    };
+    await this.recorder.prepare(config);
+    await this.recorder.start();
+    return this.filePath;
+  }
+
+  // Equivalent of MediaRecorder.stop() + release(); returns the recorded file path.
+  async stop(): Promise<string> {
+    try {
+      if (this.recorder !== undefined) {
+        await this.recorder.stop();
+        await this.recorder.release();
+        this.recorder = undefined;
+      }
+      if (this.fd >= 0) {
+        fileIo.closeSync(this.fd);
+        this.fd = -1;
+      }
+    } catch (e) {
+    }
+    return this.filePath;
+  }
+
+  async pause(): Promise<void> {
+    try { if (this.recorder !== undefined) { await this.recorder.pause(); } } catch (e) { }
+  }
+
+  async resume(): Promise<void> {
+    try { if (this.recorder !== undefined) { await this.recorder.resume(); } } catch (e) { }
+  }
+}
+"""
+
+
+def _av_player_compat_ets() -> str:
+    """Real HarmonyOS code mapping Android MediaPlayer/ExoPlayer -> @kit.MediaKit AVPlayer.
+    Plays a local sandbox/media-library file or http url. A migrated player screen binds its
+    play/pause/seek to AVPlayerCompat instead of a fake progress bar."""
+    return """// Android MediaPlayer / ExoPlayer -> HarmonyOS AVPlayer (@kit.MediaKit).
+// Plays a real local file (sandbox path, fd:// or media-library uri) or http url.
+import { media } from '@kit.MediaKit';
+
+export class AVPlayerCompat {
+  private player: media.AVPlayer | undefined = undefined;
+  public autoPlay: boolean = true;
+
+  // Equivalent of MediaPlayer.setDataSource(url) + prepareAsync().
+  async load(url: string): Promise<void> {
+    if (this.player === undefined) {
+      this.player = await media.createAVPlayer();
+      this.player.on('stateChange', (state: media.AVPlayerState) => {
+        if (state === 'initialized') {
+          this.player?.prepare();
+        } else if (state === 'prepared' && this.autoPlay) {
+          this.player?.play();
         }
-    ]
+      });
+    }
+    this.player.url = url;
+  }
+
+  async play(): Promise<void> {
+    try { if (this.player !== undefined) { await this.player.play(); } } catch (e) { }
+  }
+
+  async pause(): Promise<void> {
+    try { if (this.player !== undefined) { await this.player.pause(); } } catch (e) { }
+  }
+
+  // Equivalent of MediaPlayer.seekTo(ms).
+  seek(ms: number): void {
+    try { this.player?.seek(ms); } catch (e) { }
+  }
+
+  async stop(): Promise<void> {
+    try {
+      if (this.player !== undefined) {
+        await this.player.stop();
+        await this.player.release();
+        this.player = undefined;
+      }
+    } catch (e) {
+    }
+  }
+}
+"""
+
+
+def _preferences_compat_ets() -> str:
+    """Android SharedPreferences -> HarmonyOS @kit.ArkData preferences. Persists key/values to
+    the app sandbox so settings survive restarts (no backend)."""
+    return """// Android SharedPreferences -> HarmonyOS preferences (@kit.ArkData).
+import { preferences } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
+
+export class PreferencesCompat {
+  private store: preferences.Preferences | undefined = undefined;
+
+  async open(context: common.Context, name: string = 'app_prefs'): Promise<void> {
+    this.store = await preferences.getPreferences(context, { name });
+  }
+
+  async putString(key: string, value: string): Promise<void> {
+    if (this.store === undefined) { return; }
+    await this.store.put(key, value);
+    await this.store.flush();
+  }
+  async getString(key: string, def: string = ''): Promise<string> {
+    if (this.store === undefined) { return def; }
+    return await this.store.get(key, def) as string;
+  }
+  async putBoolean(key: string, value: boolean): Promise<void> {
+    if (this.store === undefined) { return; }
+    await this.store.put(key, value);
+    await this.store.flush();
+  }
+  async getBoolean(key: string, def: boolean = false): Promise<boolean> {
+    if (this.store === undefined) { return def; }
+    return await this.store.get(key, def) as boolean;
+  }
+  async putNumber(key: string, value: number): Promise<void> {
+    if (this.store === undefined) { return; }
+    await this.store.put(key, value);
+    await this.store.flush();
+  }
+  async getNumber(key: string, def: number = 0): Promise<number> {
+    if (this.store === undefined) { return def; }
+    return await this.store.get(key, def) as number;
+  }
+}
+"""
+
+
+def _camera_compat_ets() -> str:
+    """Android CameraX/Camera takePicture -> HarmonyOS @kit.CameraKit cameraPicker. Launches the
+    system camera and returns the captured photo uri."""
+    return """// Android camera capture -> HarmonyOS cameraPicker (@kit.CameraKit).
+import { cameraPicker, camera } from '@kit.CameraKit';
+import { common } from '@kit.AbilityKit';
+
+export class CameraCompat {
+  // Equivalent of launching the camera to take a photo; returns the captured file uri ('' on cancel).
+  static async takePhoto(context: common.Context): Promise<string> {
+    try {
+      const profile: cameraPicker.PickerProfile = {
+        cameraPosition: camera.CameraPosition.CAMERA_POSITION_BACK
+      };
+      const result = await cameraPicker.pick(context, [cameraPicker.PickerMediaType.PHOTO], profile);
+      return result.resultUri;
+    } catch (e) {
+      return '';
+    }
+  }
+}
+"""
+
+
+def _sensor_compat_ets() -> str:
+    """Android SensorManager -> HarmonyOS @kit.SensorServiceKit sensor. Subscribes to real device
+    sensors (accelerometer, orientation/compass)."""
+    return """// Android SensorManager -> HarmonyOS sensor (@kit.SensorServiceKit).
+import { sensor } from '@kit.SensorServiceKit';
+
+export class SensorCompat {
+  // Equivalent of registerListener(accelerometer).
+  static onAccelerometer(cb: (x: number, y: number, z: number) => void): void {
+    try {
+      sensor.on(sensor.SensorId.ACCELEROMETER, (data: sensor.AccelerometerResponse) => {
+        cb(data.x, data.y, data.z);
+      });
+    } catch (e) { }
+  }
+  static offAccelerometer(): void {
+    try { sensor.off(sensor.SensorId.ACCELEROMETER); } catch (e) { }
+  }
+  // Compass / device orientation in degrees.
+  static onOrientation(cb: (alpha: number, beta: number, gamma: number) => void): void {
+    try {
+      sensor.on(sensor.SensorId.ORIENTATION, (data: sensor.OrientationResponse) => {
+        cb(data.alpha, data.beta, data.gamma);
+      });
+    } catch (e) { }
+  }
+  static offOrientation(): void {
+    try { sensor.off(sensor.SensorId.ORIENTATION); } catch (e) { }
+  }
+}
+"""
+
+
+def _location_compat_ets() -> str:
+    """Android LocationManager/FusedLocationProvider -> HarmonyOS @kit.LocationKit geoLocationManager."""
+    return """// Android location -> HarmonyOS geoLocationManager (@kit.LocationKit).
+import { geoLocationManager } from '@kit.LocationKit';
+import { abilityAccessCtrl, common } from '@kit.AbilityKit';
+
+export interface SimpleLocation {
+  latitude: number;
+  longitude: number;
+}
+
+export class LocationCompat {
+  static async ensurePermission(context: common.UIAbilityContext): Promise<boolean> {
+    try {
+      const mgr = abilityAccessCtrl.createAtManager();
+      const res = await mgr.requestPermissionsFromUser(context,
+        ['ohos.permission.APPROXIMATELY_LOCATION', 'ohos.permission.LOCATION']);
+      return res.authResults.every((x: number) => x === 0);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Equivalent of getLastKnownLocation()/requestSingleUpdate.
+  static async getCurrent(context: common.UIAbilityContext): Promise<SimpleLocation> {
+    try {
+      await LocationCompat.ensurePermission(context);
+      const loc = await geoLocationManager.getCurrentLocation();
+      return { latitude: loc.latitude, longitude: loc.longitude };
+    } catch (e) {
+      return { latitude: 0, longitude: 0 };
+    }
+  }
+}
+"""
+
+
+def _notification_compat_ets() -> str:
+    """Android NotificationManager -> HarmonyOS @kit.NotificationKit notificationManager."""
+    return """// Android local notifications -> HarmonyOS notificationManager (@kit.NotificationKit).
+import { notificationManager } from '@kit.NotificationKit';
+
+export class NotificationCompat {
+  static async requestEnable(): Promise<void> {
+    try { await notificationManager.requestEnableNotification(); } catch (e) { }
+  }
+
+  // Equivalent of NotificationManager.notify(id, builder.build()).
+  static async notify(id: number, title: string, text: string): Promise<void> {
+    try {
+      const request: notificationManager.NotificationRequest = {
+        id: id,
+        content: {
+          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+          normal: { title: title, text: text }
+        }
+      };
+      await notificationManager.publish(request);
+    } catch (e) { }
+  }
+}
+"""
+
+
+def _vibrator_compat_ets() -> str:
+    """Android Vibrator -> HarmonyOS @kit.SensorServiceKit vibrator."""
+    return """// Android Vibrator -> HarmonyOS vibrator (@kit.SensorServiceKit).
+import { vibrator } from '@kit.SensorServiceKit';
+
+export class VibratorCompat {
+  // Equivalent of Vibrator.vibrate(ms).
+  static vibrate(ms: number = 100): void {
+    try {
+      vibrator.startVibration({ type: 'time', duration: ms }, { id: 0, usage: 'alarm' });
+    } catch (e) { }
+  }
+  static stop(): void {
+    try { vibrator.stopVibration(vibrator.VibratorStopMode.VIBRATOR_STOP_MODE_TIME); } catch (e) { }
+  }
+}
+"""
+
+
+def _clipboard_compat_ets() -> str:
+    """Android ClipboardManager -> HarmonyOS @kit.BasicServicesKit pasteboard."""
+    return """// Android ClipboardManager -> HarmonyOS pasteboard (@kit.BasicServicesKit).
+import { pasteboard } from '@kit.BasicServicesKit';
+
+export class ClipboardCompat {
+  // Equivalent of ClipboardManager.setPrimaryClip(newPlainText(text)).
+  static async setText(text: string): Promise<void> {
+    try {
+      const data = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
+      await pasteboard.getSystemPasteboard().setData(data);
+    } catch (e) { }
+  }
+  static async getText(): Promise<string> {
+    try {
+      const data = await pasteboard.getSystemPasteboard().getData();
+      return data.getPrimaryText();
+    } catch (e) {
+      return '';
+    }
+  }
+}
+"""
+
+
+def _device_info_compat_ets() -> str:
+    """Android Build/TelephonyManager device info -> HarmonyOS @kit.BasicServicesKit deviceInfo."""
+    return """// Android Build.* device info -> HarmonyOS deviceInfo (@kit.BasicServicesKit).
+import { deviceInfo } from '@kit.BasicServicesKit';
+
+export class DeviceInfoCompat {
+  static model(): string { return deviceInfo.productModel; }
+  static brand(): string { return deviceInfo.brand; }
+  static osVersion(): string { return deviceInfo.osFullName; }
+  static deviceType(): string { return deviceInfo.deviceType; }
+}
+"""
+
+
+def _connectivity_compat_ets() -> str:
+    """Android ConnectivityManager -> HarmonyOS @kit.NetworkKit connection."""
+    return """// Android ConnectivityManager -> HarmonyOS connection (@kit.NetworkKit).
+import { connection } from '@kit.NetworkKit';
+
+export class ConnectivityCompat {
+  // Equivalent of getActiveNetworkInfo()?.isConnected.
+  static async isConnected(): Promise<boolean> {
+    try {
+      return await connection.hasDefaultNet();
+    } catch (e) {
+      return false;
+    }
+  }
+}
+"""
+
+
+def _share_compat_ets() -> str:
+    """Android Intent.ACTION_SEND share -> HarmonyOS systemShare (@kit.AbilityKit Want)."""
+    return """// Android Intent ACTION_SEND -> HarmonyOS share via Want (@kit.AbilityKit).
+import { common, Want } from '@kit.AbilityKit';
+
+export class ShareCompat {
+  // Equivalent of startActivity(Intent.createChooser(ACTION_SEND, text)).
+  static async shareText(context: common.UIAbilityContext, text: string): Promise<void> {
+    try {
+      const want: Want = {
+        action: 'ohos.want.action.sendData',
+        type: 'text/plain',
+        parameters: { 'ability.params.stream': text }
+      };
+      await context.startAbility(want);
+    } catch (e) { }
+  }
+}
+"""
+
+
+def _contacts_compat_ets() -> str:
+    """Android ContactsContract -> HarmonyOS contact (@kit.ContactsKit)."""
+    return """// Android ContactsContract -> HarmonyOS contact (@kit.ContactsKit).
+import { contact } from '@kit.ContactsKit';
+
+export class ContactsCompat {
+  // Equivalent of picking a contact (no broad READ_CONTACTS needed for the picker).
+  static async pickContactName(): Promise<string> {
+    try {
+      const picked = await contact.selectContact();
+      if (picked.length > 0 && picked[0].name !== undefined) {
+        return picked[0].name.fullName;
+      }
+      return '';
+    } catch (e) {
+      return '';
+    }
+  }
+}
+"""
+
+
+def _calendar_compat_ets() -> str:
+    """Android CalendarContract -> HarmonyOS calendarManager (@kit.CalendarKit)."""
+    return """// Android CalendarContract -> HarmonyOS calendarManager (@kit.CalendarKit).
+import { calendarManager } from '@kit.CalendarKit';
+import { common } from '@kit.AbilityKit';
+
+export class CalendarCompat {
+  // Equivalent of inserting a CalendarContract.Events row.
+  static async addEvent(context: common.Context, title: string, startMs: number, endMs: number): Promise<void> {
+    try {
+      const mgr = calendarManager.getCalendarManager(context);
+      const calendar = await mgr.getCalendar();
+      const event: calendarManager.Event = {
+        title: title,
+        type: calendarManager.EventType.NORMAL,
+        startTime: startMs,
+        endTime: endMs
+      };
+      await calendar.addEvent(event);
+    } catch (e) { }
+  }
+}
+"""
+
+
+def _biometric_compat_ets() -> str:
+    """Android BiometricPrompt -> HarmonyOS userAuth (@kit.UserAuthenticationKit). Local auth, no backend."""
+    return """// Android BiometricPrompt -> HarmonyOS userAuth (@kit.UserAuthenticationKit).
+import { userAuth } from '@kit.UserAuthenticationKit';
+
+export class BiometricCompat {
+  // Equivalent of BiometricPrompt.authenticate(); resolves true on success.
+  static authenticate(title: string = 'Verify identity'): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      try {
+        const authParam: userAuth.AuthParam = {
+          challenge: new Uint8Array([1, 2, 3, 4]),
+          authType: [userAuth.UserAuthType.FINGERPRINT, userAuth.UserAuthType.FACE],
+          authTrustLevel: userAuth.AuthTrustLevel.ATL1
+        };
+        const widgetParam: userAuth.WidgetParam = { title: title };
+        const instance = userAuth.getUserAuthInstance(authParam, widgetParam);
+        instance.on('result', {
+          onResult: (result: userAuth.UserAuthResult) => {
+            resolve(result.result === userAuth.UserAuthResultCode.SUCCESS);
+          }
+        });
+        instance.start();
+      } catch (e) {
+        resolve(false);
+      }
+    });
+  }
+}
+"""
+
+
+# Capability id -> (adapter module name, ArkTS source emitter). When the analyzer detects a
+# capability is used (system_api_map), the generator emits the real adapter into platform/.
+# This is how "system-level APIs map to real HarmonyOS Kits" scales to every capability.
+_CAPABILITY_ADAPTERS = {
+    "photos_video": ("MediaStoreCompat", _media_store_compat_ets),
+    "audio_record": ("AudioRecorderCompat", _audio_recorder_compat_ets),
+    "av_playback": ("AVPlayerCompat", _av_player_compat_ets),
+    "key_value": ("PreferencesCompat", _preferences_compat_ets),
+    "camera": ("CameraCompat", _camera_compat_ets),
+    "sensors": ("SensorCompat", _sensor_compat_ets),
+    "location": ("LocationCompat", _location_compat_ets),
+    "notification": ("NotificationCompat", _notification_compat_ets),
+    "vibration": ("VibratorCompat", _vibrator_compat_ets),
+    "clipboard": ("ClipboardCompat", _clipboard_compat_ets),
+    "device_info": ("DeviceInfoCompat", _device_info_compat_ets),
+    "connectivity": ("ConnectivityCompat", _connectivity_compat_ets),
+    "share": ("ShareCompat", _share_compat_ets),
+    "contacts": ("ContactsCompat", _contacts_compat_ets),
+    "calendar": ("CalendarCompat", _calendar_compat_ets),
+    "biometric": ("BiometricCompat", _biometric_compat_ets),
+}
+
+# Per-permission user-facing reason (string resource key -> English text). Injected into both
+# module.json5 (requestPermissions) and string.json so any adapter's permission resolves.
+_PERMISSION_REASONS: dict[str, tuple[str, str]] = {
+    "ohos.permission.INTERNET": ("permission_internet_reason", "Load migrated network data and images"),
+    "ohos.permission.READ_IMAGEVIDEO": ("permission_read_media_reason", "Read device photos and videos to display"),
+    "ohos.permission.MICROPHONE": ("permission_microphone_reason", "Record audio from the microphone"),
+    "ohos.permission.CAMERA": ("permission_camera_reason", "Take photos with the camera"),
+    "ohos.permission.LOCATION": ("permission_location_reason", "Show your location"),
+    "ohos.permission.APPROXIMATELY_LOCATION": ("permission_approx_location_reason", "Show your approximate location"),
+    "ohos.permission.ACTIVITY_MOTION": ("permission_activity_motion_reason", "Count your steps and motion"),
+    "ohos.permission.VIBRATE": ("permission_vibrate_reason", "Vibrate for alerts"),
+    "ohos.permission.READ_CONTACTS": ("permission_read_contacts_reason", "Read your contacts"),
+    "ohos.permission.WRITE_CONTACTS": ("permission_write_contacts_reason", "Save contacts"),
+    "ohos.permission.READ_CALENDAR": ("permission_read_calendar_reason", "Read your calendar events"),
+    "ohos.permission.WRITE_CALENDAR": ("permission_write_calendar_reason", "Save calendar events"),
+    "ohos.permission.PUBLISH_AGENT_REMINDER": ("permission_reminder_reason", "Schedule reminders and alarms"),
+    "ohos.permission.ACCESS_BIOMETRIC": ("permission_biometric_reason", "Unlock with fingerprint or face"),
+    "ohos.permission.GET_NETWORK_INFO": ("permission_network_info_reason", "Check network connectivity"),
+    "ohos.permission.ACCESS_BLUETOOTH": ("permission_bluetooth_reason", "Connect Bluetooth devices"),
+    "ohos.permission.NFC_TAG": ("permission_nfc_reason", "Read NFC tags"),
+}
+
+
+def _detect_capabilities(project: AndroidProject) -> list[str]:
+    """System capability ids (system_api_map) whose Android APIs appear anywhere in the source."""
+    found: list[str] = []
+    seen: set[str] = set()
+    for module in project.modules:
+        for src in module.source_files:
+            try:
+                text = src.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for cid in system_api_map.detect_capabilities(text):
+                if cid not in seen:
+                    seen.add(cid)
+                    found.append(cid)
+    return found
+
+
+def _module_json(
+    module: AndroidModule | None,
+    project_name: str,
+    uses_mediastore: bool = False,
+    permissions: list[str] | None = None,
+) -> str:
+    label = project_name
+    # Build the ordered permission set: INTERNET always; READ_IMAGEVIDEO for the legacy
+    # uses_mediastore flag; plus any capability permissions detected via system_api_map.
+    perm_names: list[str] = ["ohos.permission.INTERNET"]
     if uses_mediastore:
-        # Android MediaStore device-photo access -> HarmonyOS READ_IMAGEVIDEO.
+        perm_names.append("ohos.permission.READ_IMAGEVIDEO")
+    for p in permissions or []:
+        if p not in perm_names:
+            perm_names.append(p)
+    request_permissions = []
+    for name in perm_names:
+        reason_key = _PERMISSION_REASONS.get(name, (None, None))[0] or "permission_internet_reason"
         request_permissions.append({
-            "name": "ohos.permission.READ_IMAGEVIDEO",
-            "reason": "$string:permission_read_media_reason",
+            "name": name,
+            "reason": f"$string:{reason_key}",
             "usedScene": {
                 "abilities": ["EntryAbility"],
                 "when": "inuse",
@@ -2020,10 +2568,13 @@ def _strings_json(module: AndroidModule | None, project_name: str) -> str:
             {"name": "EntryAbility_desc", "value": "Migrated entry ability"},
             {"name": "EntryAbility_label", "value": project_name},
             {"name": "app_name", "value": project_name},
-            {"name": "permission_internet_reason", "value": "Load migrated network data and images"},
-            {"name": "permission_read_media_reason", "value": "Read device photos and videos to display"},
         ]
     }
+    # Permission reason strings (one per known permission) so any adapter-injected
+    # requestPermissions entry resolves its $string:..._reason.
+    for _key, _text in _PERMISSION_REASONS.values():
+        if not any(s["name"] == _key for s in strings["string"]):
+            strings["string"].append({"name": _key, "value": _text})
     if module:
         base_res = module.path / "src" / "main" / "res"
         values = base_res / "values" / "strings.xml" if base_res.exists() else module.path / "res" / "values" / "strings.xml"

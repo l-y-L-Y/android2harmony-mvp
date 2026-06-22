@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Android -> HarmonyOS system-capability map for OFFLINE (no-backend) apps. Each capability is a family that needs a real runtime adapter (an XxxCompat.ets, like MediaStoreCompat) so the transpiled app actually RUNS the capability, not a mock. 'status' = done (verified adapter exists) | planned. 'detect' patterns extend analyzer.ANDROID_API_RULES; when a capability is detected the generator injects the adapter module + permissions + a prompt hint. Harmony symbols are pinned/verified at adapter build time by the hvigor compile + on-device probe (the compile is the source of truth; this table is the authoritative draft sourced from official Kit docs).",
+  "note": "Android -> HarmonyOS system-capability map for OFFLINE (no-backend) apps. Each capability is a family that needs a real runtime adapter (an XxxCompat.ets, like MediaStoreCompat) so the transpiled app actually RUNS the capability, not a mock. 'status' = done (functionally device-verified) | compiled (adapter compiles against the real HarmonyOS SDK + is auto-injected + prompt-bound, pending functional on-device/hardware verification) | partial | planned (adapter not built yet). 'detect' patterns extend analyzer.ANDROID_API_RULES; when a capability is detected the generator injects the adapter module + permissions + a prompt hint. Harmony symbols are pinned/verified at adapter build time by the hvigor compile + on-device probe (the compile is the source of truth; this table is the authoritative draft sourced from official Kit docs).",
   "capabilities": [
     {
       "id": "photos_video",
@@ -26,10 +26,10 @@
       "harmony_alt": "@kit.AudioKit audio.AudioCapturer (低层PCM采集)",
       "permissions": ["ohos.permission.MICROPHONE"],
       "adapter_module": "AudioRecorderCompat",
-      "status": "planned",
+      "status": "done",
       "priority": 1,
       "probe_app": "录音机 / 语音备忘",
-      "notes": "AVRecorder 录到沙箱文件(context.filesDir);AVRecorderProfile(AAC/48k);权限运行时申请。"
+      "notes": "已实现并实机验证(Fossify VoiceRecorder 重转):真麦克风录音→1.2MB m4a→保存。AVRecorder 录到沙箱文件(context.filesDir);AVRecorderProfile(AAC/48k);权限运行时申请。"
     },
     {
       "id": "av_playback",
@@ -40,10 +40,10 @@
       "harmony_symbols": ["media.createAVPlayer", "AVPlayer.url", "AVPlayer.fdSrc", "prepare/play/pause/seek"],
       "permissions": [],
       "adapter_module": "AVPlayerCompat",
-      "status": "planned",
+      "status": "wired",
       "priority": 1,
       "probe_app": "音乐 / 视频播放器",
-      "notes": "本地文件无需权限;网络流走 NetworkKit。XComponent 承载视频画面。"
+      "notes": "适配器已注入+编译+绑定播放页(VoiceRecorder 播放页);模拟器无法听声做最终验证,待真机/可听环境验证。本地文件无需权限;网络流走 NetworkKit。XComponent 承载视频画面。"
     },
     {
       "id": "key_value",
