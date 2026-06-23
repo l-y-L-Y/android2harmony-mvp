@@ -1240,11 +1240,53 @@ def _device_info_compat_ets() -> str:
     return """// Android Build.* device info -> HarmonyOS deviceInfo (@kit.BasicServicesKit).
 import { deviceInfo } from '@kit.BasicServicesKit';
 
+export interface DeviceInfoRow {
+  label: string;
+  value: string;
+}
+
 export class DeviceInfoCompat {
-  static model(): string { return deviceInfo.productModel; }
+  // Build.MANUFACTURER / BRAND / MODEL and hardware identity
+  static manufacturer(): string { return deviceInfo.manufacture; }
   static brand(): string { return deviceInfo.brand; }
-  static osVersion(): string { return deviceInfo.osFullName; }
+  static model(): string { return deviceInfo.productModel; }
+  static marketName(): string { return deviceInfo.marketName; }
+  static productSeries(): string { return deviceInfo.productSeries; }
+  static hardwareModel(): string { return deviceInfo.hardwareModel; }
   static deviceType(): string { return deviceInfo.deviceType; }
+  // Build.VERSION.* and build identity
+  static osVersion(): string { return deviceInfo.osFullName; }
+  static osReleaseType(): string { return deviceInfo.osReleaseType; }
+  static displayVersion(): string { return deviceInfo.displayVersion; }
+  static incrementalVersion(): string { return deviceInfo.incrementalVersion; }
+  static securityPatch(): string { return deviceInfo.securityPatchTag; }
+  static sdkVersion(): string { return deviceInfo.sdkApiVersion.toString(); }
+  static buildType(): string { return deviceInfo.buildType; }
+  static buildTime(): string { return deviceInfo.buildTime; }
+  static bootloaderVersion(): string { return deviceInfo.bootloaderVersion; }
+  static abiList(): string { return deviceInfo.abiList; }
+  static buildRootHash(): string { return deviceInfo.buildRootHash; }
+
+  // Whole device-spec list (for "device info / about phone" list screens):
+  // returns real {label, value} rows so the page renders actual device data.
+  static all(): DeviceInfoRow[] {
+    return [
+      { label: 'Manufacturer', value: DeviceInfoCompat.manufacturer() },
+      { label: 'Brand', value: DeviceInfoCompat.brand() },
+      { label: 'Model', value: DeviceInfoCompat.model() },
+      { label: 'Market Name', value: DeviceInfoCompat.marketName() },
+      { label: 'Product Series', value: DeviceInfoCompat.productSeries() },
+      { label: 'Hardware Model', value: DeviceInfoCompat.hardwareModel() },
+      { label: 'Device Type', value: DeviceInfoCompat.deviceType() },
+      { label: 'OS Version', value: DeviceInfoCompat.osVersion() },
+      { label: 'Release Type', value: DeviceInfoCompat.osReleaseType() },
+      { label: 'Display Version', value: DeviceInfoCompat.displayVersion() },
+      { label: 'Security Patch', value: DeviceInfoCompat.securityPatch() },
+      { label: 'SDK Version', value: DeviceInfoCompat.sdkVersion() },
+      { label: 'Build Type', value: DeviceInfoCompat.buildType() },
+      { label: 'ABI List', value: DeviceInfoCompat.abiList() }
+    ];
+  }
 }
 """
 

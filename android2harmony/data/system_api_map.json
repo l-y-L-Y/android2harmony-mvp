@@ -110,10 +110,10 @@
       "harmony_symbols": ["sensor.on(SensorId.ACCELEROMETER/GYROSCOPE/ORIENTATION/PEDOMETER, cb)"],
       "permissions": ["ohos.permission.ACTIVITY_MOTION (仅计步/心率等)"],
       "adapter_module": "SensorCompat",
-      "status": "compiled",
+      "status": "wired",
       "priority": 4,
       "probe_app": "指南针 / 水平仪 / 计步",
-      "notes": "基础运动/方向传感器无需权限;计步 PEDOMETER 需 ACTIVITY_MOTION。"
+      "notes": "基础运动/方向传感器无需权限;计步 PEDOMETER 需 ACTIVITY_MOTION。2026-06-23 真机(Pura 90 Pro,fresh 项目 iutinvg/Compass):检测→注入 SensorCompat→页面 SensorCompat.onOrientation 绑定+箭头 rotate+显示度数→repair-build 自修实例/静态调用不一致(3轮)→装机渲染完整指南针盘不崩,显示 0°/N。模拟器无磁力计,信号帧无法验证(同 av_playback 档),故 wired 非 done。"
     },
     {
       "id": "location",
@@ -264,10 +264,10 @@
       "harmony_symbols": ["deviceInfo.deviceType/productModel/osFullName"],
       "permissions": [],
       "adapter_module": "DeviceInfoCompat",
-      "status": "compiled",
+      "status": "done",
       "priority": 5,
       "probe_app": "关于/系统信息类",
-      "notes": "设备型号/系统版本只读,无需权限;硬件唯一标识受限。"
+      "notes": "设备型号/系统版本只读,无需权限;硬件唯一标识受限。2026-06-23 真机(Pura 90 Pro,fresh 项目 sarthakroy2002/Simple-Device-Info):转译后界面显示真实值(Manufacturer/Brand HUAWEI、Model emulator、OS Version OpenHarmony-7.0.0.23(Beta1)、Security Patch 2026/05/01 等运行时真值,非 mock)。配套加固:DeviceInfoCompat 从 4 字段扩成 ~18 个正确字段 + DeviceInfoRow 接口 + all() 整表;prompt 加 device_info→DeviceInfoCompat 条款(否则 LLM 裸猜 deviceInfo.* 字段名报错)。"
     },
     {
       "id": "bluetooth",
