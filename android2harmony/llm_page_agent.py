@@ -68,6 +68,49 @@ def _navigation_section(page_name: str, routes: list[str] | None) -> str:
     )
 
 
+def _room_persistence_clause(db_adapters: list[str] | None, db_entities: str) -> str:
+    """The ROOM PERSISTENCE prompt bullet.
+
+    When the project actually has generated DAO adapters, name the EXACT class + import
+    line and the real entity columns, and forbid the model from stubbing a same-name empty
+    class (the failure mode that left notes/tasks non-persistent). Otherwise keep the
+    generic guidance so non-Room apps are unaffected.
+    """
+    if db_adapters:
+        primary = db_adapters[0]
+        others = (
+            " (sibling DAO adapters also available: " + ", ".join(db_adapters[1:]) + ")"
+            if len(db_adapters) > 1 else ""
+        )
+        fields_note = (
+            " The persisted entity columns are: " + db_entities
+            + ". Use ONLY these field names with their EXACT case; do NOT invent extra fields."
+            if db_entities else ""
+        )
+        return (
+            "- ROOM/SQLITE PERSISTENCE (data MUST survive restart; real device storage, NOT a mock array): "
+            "this app HAS a generated RDB-backed DAO adapter. Import it EXACTLY: "
+            "`import { " + primary + " } from '../database/DaoAdapters'`" + others
+            + ", and `import { common } from '@kit.AbilityKit'`. "
+            "NEVER define your own `class " + primary + "` or any local DAO/stub - the imported adapter already writes to the device database. "
+            "Hold `private dao: " + primary + " = new " + primary + "()` and a typed `@State items: ItemType[] = []`." + fields_note
+            + " In aboutToAppear: FIRST `this.dao.setContext(getContext(this) as common.Context)`, then `const rows = await this.dao.queryAll()`; "
+            "if rows.length === 0, SEED by awaiting `this.dao.persistRow(item)` for each realistic sample item, then `this.items = await this.dao.queryAll() as ItemType[]`; "
+            "else `this.items = rows as ItemType[]`. ADD via `await this.dao.persistRow(newItem)` then reload queryAll; DELETE via `await this.dao.deleteRow('id', idValue)` then reload. "
+            "CRITICAL: if THIS screen shows a list/RecyclerView/grid of those records - even indirectly through a ViewModel/LiveData/Flow/Repository/RecyclerView.Adapter (e.g. the source references the entity type, a `*Adapter`, or `viewModel.<items>.observe(...)`) - you MUST fill it from `await this.dao.queryAll()` in aboutToAppear and render those rows with ForEach; NEVER hardcode a sample/mock array in place of the real persisted data. "
+            "Do NOT keep the list only in a local array that resets on restart."
+        )
+    return (
+        "- ROOM/SQLITE PERSISTENCE (data must survive restart; system storage, NOT mock): when the source persists the list in Room, "
+        "import the matching adapter from '../database/DaoAdapters' (its class is named after the @Dao, e.g. a `NoteDao` becomes `NoteDaoAdapter`); "
+        "also import common from '@kit.AbilityKit'. Hold a field 'private dao: XxxAdapter = new XxxAdapter()' and a typed '@State items: ItemType[] = []'. "
+        "In aboutToAppear: FIRST call 'this.dao.setContext(getContext(this) as common.Context)', then 'const rows = await this.dao.queryAll()'; "
+        "if rows.length is 0, SEED by awaiting 'this.dao.persistRow(item)' for each realistic sample item, then 'this.items = await this.dao.queryAll() as ItemType[]'; "
+        "else 'this.items = rows as ItemType[]'. ADD an item via 'await this.dao.persistRow(newItem)' then reload queryAll; DELETE via 'await this.dao.deleteRow(idField, idValue)' then reload. "
+        "NEVER keep the list only in a local array that resets on restart."
+    )
+
+
 def build_page_prompt(
     page_name: str,
     layout_source: str,
@@ -76,11 +119,14 @@ def build_page_prompt(
     string_hints: str = "",
     available_media: set[str] | None = None,
     routes: list[str] | None = None,
+    db_adapters: list[str] | None = None,
+    db_entities: str = "",
 ) -> str:
     media_list = ", ".join(sorted(available_media)) if available_media else "foreground, background"
     fence = "xml" if source_kind == "xml" else "kotlin"
     hints = f"\nString resources you may reference (name -> value):\n{string_hints}\n" if string_hints else ""
     nav_section = _navigation_section(page_name, routes)
+    room_clause = _room_persistence_clause(db_adapters, db_entities)
     return f"""Migrate this Android {source_kind} screen into a single HarmonyOS ArkUI page.
 
 App: {app_label}
@@ -93,7 +139,7 @@ HARD REQUIREMENTS:
 - Faithfully reproduce the visual layout: orientation, ordering, alignment/gravity, spacing, bold/size emphasis, lists/grids, toolbars, inputs, buttons, images.
 - Use real ArkUI components only: Text, Button, Image, Column, Row, Stack, Flex, List/ListItem, Grid/GridItem, TextInput, Checkbox, Toggle, Scroll, Divider, Tabs.
 - Lists/RecyclerView/GridView: render with `ForEach`. PREFER persisted data: if the list items come from a Room DB (the source has @Entity/@Dao/RoomDatabase for them, e.g. notes/tasks/records), bind to the generated DAO adapter so data SURVIVES app restart instead of a resettable mock array (see ROOM PERSISTENCE below). Only when there is NO DB behind the list, render over a small local `@State` sample array of realistic items derived from the screen's domain (NOT generic "Sample Item").
-- ROOM/SQLITE PERSISTENCE (data must survive restart; system storage, NOT mock): when the source persists the list in Room, import the matching adapter from '../database/DaoAdapters' (its class is named after the @Dao, e.g. a `NoteDao` becomes `NoteDaoAdapter`); also import common from '@kit.AbilityKit'. Hold a field 'private dao: XxxAdapter = new XxxAdapter()' and a typed '@State items: ItemType[] = []'. In aboutToAppear: FIRST call 'this.dao.setContext(getContext(this) as common.Context)' (the DB needs the ability context), then 'const rows = await this.dao.queryAll()'; if rows.length is 0, SEED by awaiting 'this.dao.persistRow(item)' for each realistic sample item you would otherwise hardcode, then 'this.items = await this.dao.queryAll() as ItemType[]'; else 'this.items = rows as ItemType[]'. ADD an item via 'await this.dao.persistRow(newItem)' then reload queryAll; DELETE via 'await this.dao.deleteRow(idField, idValue)' then reload. NEVER keep the list only in a local array that resets on restart.
+{room_clause}
 - If the source includes Activity/Fragment CODE, reproduce what it actually shows: real tab titles, the fragments a ViewPager/TabLayout/BottomNavigation hosts, list item shape, and data. Do NOT invent unrelated tabs.
 - Host screens (ViewPager / TabLayout / BottomNavigation + fragments, or a fragment container): show the real content INLINE by importing each hosted screen as a component from its sibling file `./FragmentXxx` and rendering `FragmentXxx()` inside that tab/area. Pick the matching page name from the route list. Never fill a tab with just a label string.
 - DEVICE PHOTO/VIDEO LIBRARY (system data, NOT mock): if the source reads the device gallery via Android MediaStore (e.g. `MediaStore.Images`/`MediaStore.Video`, `ContentResolver.query(...EXTERNAL_CONTENT_URI...)`, a media/photo fetcher), DO NOT fabricate a sample array. Read the REAL device library: `import {{ MediaStoreCompat, DeviceMedia }} from '../platform/MediaStoreCompat'` and `import {{ common }} from '@kit.AbilityKit'`; declare `@State mediaList: DeviceMedia[] = []`; in `aboutToAppear` call `MediaStoreCompat.loadMedia(getContext(this) as common.UIAbilityContext).then((r: DeviceMedia[]) => {{ this.mediaList = r }})`; render the grid/list with `Image(item.uri)` (and a video badge when `item.isVideo`). This shows the user's actual photos.
@@ -102,7 +148,7 @@ HARD REQUIREMENTS:
 - Media (static/UI images only): reference `$r('app.media.NAME')` where NAME is one of: {media_list}. If unsure, omit the image or use `$r('app.media.foreground')`. Never invent other resource names.
 - Do NOT emit any "debug navigation", route-button list, or migration-scaffold UI.
 {nav_section}- Unknown click actions with no matching target page: use empty `() => {{}}` with a `// TODO` comment.
-- Imports: only system kits (e.g. `@kit.ArkUI`) and sibling page components from `./PageName` (for embedding hosted fragments). Do not import other unknown project files. State fields must use `this.` inside methods.
+- Imports: system kits (e.g. `@kit.ArkUI`, `@kit.AbilityKit`), sibling page components from `./PageName` (for embedding hosted fragments), and the generated adapters named above from `../database/DaoAdapters` and `../platform/XxxCompat`. NEVER define or stub a local copy of one of those adapters - import the real one. Do not import other unknown project files. State fields must use `this.` inside methods.
 - Output the COMPLETE file. Do not stop early or summarize.
 
 {ARKUI_RULES}
@@ -125,10 +171,15 @@ def generate_arkui_page(
     routes: list[str] | None = None,
     max_tokens: int = 12000,
     call_fn: Callable[[str, str, int], str] | None = None,
+    db_adapters: list[str] | None = None,
+    db_entities: str = "",
 ) -> str:
     """Generate one ArkUI page from an Android screen. Raises RuntimeError on failure."""
     call = call_fn or call_llm
-    prompt = build_page_prompt(page_name, layout_source, app_label, source_kind, string_hints, available_media, routes)
+    prompt = build_page_prompt(
+        page_name, layout_source, app_label, source_kind, string_hints, available_media, routes,
+        db_adapters=db_adapters, db_entities=db_entities,
+    )
     media = _media_lower(available_media)
 
     last_err = ""

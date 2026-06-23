@@ -67,11 +67,11 @@
       "harmony_kit": "@kit.ArkData",
       "harmony_symbols": ["relationalStore.getRdbStore", "RdbStore.executeSql/insert/query", "RdbPredicates"],
       "permissions": [],
-      "adapter_module": "RdbCompat",
-      "status": "planned",
+      "adapter_module": "RelationalStoreAdapter",
+      "status": "done",
       "priority": 2,
       "probe_app": "笔记 / 记账 / 待办",
-      "notes": "把 @Dao 方法映射成 RdbCompat 的 typed CRUD;securityLevel S1;无需权限。"
+      "notes": "从 @Entity/@Dao 生成 RoomSchema.ets + DaoAdapters.ets + RelationalStoreAdapter.ets;@Dao 方法映射成 typed CRUD,securityLevel S1,无需权限。2026-06-23 真机验证(Pura 90 Pro,fresh 项目 MyNotes):首屏 seed→migrated_room.db 落盘(/data/app/el2/100/database/<bundle>/entry/rdb/),强杀+重启后 sqlite3 拉出同样 5 行(id 1-5 未重种)、4 列含 deadLine、界面列表渲染一致。修复点:@Query 正则 suspend 可选、CREATE TABLE 用真实 @Entity(tableName)、insertRow 按真列过滤+丢弃autogen id=0、注释内逗号导致丢列、prompt 注入真实 DAO 适配器类名禁空壳。"
     },
     {
       "id": "file_storage",

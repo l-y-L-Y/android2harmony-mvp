@@ -150,6 +150,8 @@ def generate_harmony_project(
     app_label = android_strings.get("app_name") or project.name
     available_media = _available_media_names(project)
     page_names = {r.split("/")[-1] for r in pipeline.routes}  # fragments now generated as pages
+    db_adapter_names = _dao_adapter_names(project)  # exact DAO adapter class names for the page prompt
+    db_entity_fields = _entity_field_summary(project)  # real entity columns so the LLM won't invent fields
     # (route, page_name, source_kind, source_path)
     llm_jobs: list[tuple[str, str, str, Path]] = []
     placeholder_pages: list[str] = []  # routes with no Android source to migrate from
@@ -222,7 +224,7 @@ def generate_harmony_project(
             code = generate_arkui_page(
                 page_name=page_name, layout_source=source, app_label=app_label,
                 source_kind=source_kind, string_hints=string_hints, available_media=available_media,
-                routes=pipeline.routes,
+                routes=pipeline.routes, db_adapters=db_adapter_names, db_entities=db_entity_fields,
             )
             return route, page_name, code, ""
         except Exception as exc:
@@ -1810,7 +1812,8 @@ def _room_schema_ets(project: AndroidProject) -> str:
                 primary = " PRIMARY KEY" if _field_is_primary_key(text, name) else ""
                 columns.append(f"  {name} {sql_type}{primary}")
             columns_sql = ",\n".join(columns)
-            tables.append(f"CREATE TABLE IF NOT EXISTS {parsed['name']} (\n{columns_sql}\n);")
+            table_name = _entity_table_name(text, str(parsed["name"]))
+            tables.append(f"CREATE TABLE IF NOT EXISTS {table_name} (\n{columns_sql}\n);")
     payload = json.dumps(tables, indent=2, ensure_ascii=False)
     return f"""/* Generated from Room @Entity classes. */
 
@@ -1908,6 +1911,7 @@ STANDARD_DAO_METHODS = '''  private tableName: string = '__TABLE__';
 
 def _dao_adapters_ets(project: AndroidProject) -> str:
     entities = _discover_room_entities(project)
+    entity_tables = {name: str(e.get("table", name)) for name, e in entities.items()}
     dao_blocks: list[str] = []
     for module in project.modules:
         for src in module.source_files:
@@ -1915,8 +1919,8 @@ def _dao_adapters_ets(project: AndroidProject) -> str:
             if "@Dao" not in text:
                 continue
             class_name = _arkts_identifier(src.stem)
-            queries = re.findall(r'@Query\("([^"]+)"\)\s*suspend\s+fun\s+([A-Za-z0-9_]+)\(([^)]*)\)', text, re.S)
-            inserts = re.findall(r'@Insert[^\n]*\s*suspend\s+fun\s+([A-Za-z0-9_]+)\(([^)]*)\)', text, re.S)
+            queries = re.findall(r'@Query\("([^"]+)"\)\s*(?:suspend\s+)?fun\s+([A-Za-z0-9_]+)\(([^)]*)\)', text, re.S)
+            inserts = re.findall(r'@Insert[^\n]*\s*(?:suspend\s+)?fun\s+([A-Za-z0-9_]+)\(([^)]*)\)', text, re.S)
             methods: list[str] = []
             for name, params in inserts:
                 entity_name = _dao_param_entity_name(params)
@@ -1942,6 +1946,14 @@ def _dao_adapters_ets(project: AndroidProject) -> str:
             if not methods:
                 methods.append("  async queryAll(): Promise<Object[]> {\n    return this.rows;\n  }")
             primary_table = next((_sql_table(s) for s, _qn, _qp in queries if _sql_table(s)), "")
+            if not primary_table:
+                # DAO with only @Insert/@Delete (no parseable FROM): fall back to the
+                # real table of the entity it inserts (@Entity(tableName=...) or class name).
+                for _iname, _iparams in inserts:
+                    _ent = _dao_param_entity_name(_iparams)
+                    if _ent and _arkts_identifier(_ent) in entity_tables:
+                        primary_table = entity_tables[_arkts_identifier(_ent)]
+                        break
             standard_methods = STANDARD_DAO_METHODS.replace("__TABLE__", _escape(primary_table))
             methods = [m for m in methods if "async queryAll(" not in m]
             dao_blocks.append(f"""export class {class_name}Adapter {{
@@ -2083,6 +2095,7 @@ import { RoomSchemaSql } from './RoomSchema';
 export class RelationalStoreAdapter {
   private store?: relationalStore.RdbStore;
   private lastError: string = '';
+  private columnCache: Record<string, string[]> = {};
 
   async open(context: common.Context, name: string = 'migrated_room.db'): Promise<void> {
     const config: relationalStore.StoreConfig = {
@@ -2127,10 +2140,51 @@ export class RelationalStoreAdapter {
     }
   }
 
+  private async columnsFor(table: string): Promise<string[]> {
+    const cached = this.columnCache[table];
+    if (cached) { return cached; }
+    const cols: string[] = [];
+    if (this.store) {
+      try {
+        const rs = await this.store.querySql('PRAGMA table_info(' + table + ')', []);
+        if (rs) {
+          const nameIdx = rs.getColumnIndex('name');
+          while (rs.goToNextRow()) {
+            try { cols.push(rs.getString(nameIdx)); } catch (e) { }
+          }
+          rs.close();
+        }
+      } catch (err) { }
+    }
+    this.columnCache[table] = cols;
+    return cols;
+  }
+
   async insertRow(table: string, values: Object): Promise<boolean> {
     if (!this.store) { return false; }
     try {
-      const rowId = await this.store.insert(table, values as relationalStore.ValuesBucket);
+      // Map the page's object onto the table's REAL columns: drop unknown fields the
+      // LLM may have invented, fix case mismatches, and omit an autogenerated id sent as
+      // 0/null so SQLite assigns a fresh rowid (avoids REPLACE collapsing every row).
+      const cols = await this.columnsFor(table);
+      const src = values as Record<string, relationalStore.ValueType>;
+      let payload: relationalStore.ValuesBucket;
+      if (cols.length > 0) {
+        const byLower: Record<string, string> = {};
+        for (const c of cols) { byLower[c.toLowerCase()] = c; }
+        const bucket: Record<string, relationalStore.ValueType> = {};
+        for (const key of Object.keys(src)) {
+          const col = byLower[key.toLowerCase()];
+          if (!col) { continue; }
+          const v = src[key];
+          if (col.toLowerCase() === 'id' && (v === 0 || v === undefined || v === null)) { continue; }
+          bucket[col] = v;
+        }
+        payload = bucket as relationalStore.ValuesBucket;
+      } else {
+        payload = src as relationalStore.ValuesBucket;
+      }
+      const rowId = await this.store.insert(table, payload);
       this.lastError = '';
       return rowId >= 0;
     } catch (err) {
@@ -2167,6 +2221,7 @@ def _discover_room_entities(project: AndroidProject) -> dict[str, dict[str, obje
                 continue
             parsed = _parse_kotlin_data_class(src.stem, text)
             if parsed:
+                parsed["table"] = _entity_table_name(text, str(parsed["name"]))
                 entities[str(parsed["name"])] = parsed
     return entities
 
@@ -2210,6 +2265,44 @@ def _sql_table(sql: str) -> str | None:
     if match:
         return match.group(1)
     return None
+
+
+def _entity_table_name(text: str, fallback: str) -> str:
+    """Room's real SQLite table name from @Entity(tableName="..."); else the class name.
+
+    _parse_kotlin_data_class strips annotations, so the table name must be read from the
+    raw source. Callers only invoke this for files that contain @Entity.
+    """
+    match = re.search(r'tableName\s*=\s*"([^"]+)"', text)
+    return match.group(1) if match else fallback
+
+
+def _dao_adapter_names(project: AndroidProject) -> list[str]:
+    """Exact generated DAO adapter class names (e.g. TasksDao.kt -> TasksDaoAdapter).
+
+    Threaded into the page prompt so the LLM imports the real adapter instead of
+    inventing a same-name empty stub class.
+    """
+    names: list[str] = []
+    for module in project.modules:
+        for src in module.source_files:
+            text = src.read_text(encoding="utf-8", errors="ignore")
+            if "@Dao" not in text:
+                continue
+            name = f"{_arkts_identifier(src.stem)}Adapter"
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def _entity_field_summary(project: AndroidProject) -> str:
+    """e.g. 'TaskEntity(id, title, description, deadLine)' so the LLM uses real columns."""
+    parts: list[str] = []
+    for name, parsed in _discover_room_entities(project).items():
+        fields = parsed.get("fields") or []
+        cols = ", ".join(str(f[0]) for f in fields)  # type: ignore[index]
+        parts.append(f"{name}({cols})")
+    return "; ".join(parts)
 
 
 def _repositories_ets(project: AndroidProject) -> str:
@@ -2342,6 +2435,10 @@ def _generic_repository_method_ets(item: dict[str, str]) -> str:
 
 
 def _parse_kotlin_data_class(default_name: str, text: str) -> dict[str, object] | None:
+    # Strip comments first: a // or /* */ comment between constructor params can contain a
+    # comma that breaks param splitting and silently drops every field after it.
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", "", text)
     clean_text = re.sub(r"@\w+(?::\w+)?(?:\([^)]*\))?\s*", "", text)
     match = re.search(r"data\s+class\s+([A-Za-z0-9_]+)\s*\((.*?)\)\s*(?:[:{]|$)", clean_text, re.S)
     if not match:
