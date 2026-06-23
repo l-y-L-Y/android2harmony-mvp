@@ -57,6 +57,30 @@ def test_prompt_no_navigation_when_alone():
     assert "Navigation: the real pages" not in prompt
 
 
+def test_prompt_locks_output_language_to_english_source():
+    # an English app must not be silently translated to Chinese in invented labels/seed data
+    prompt = build_page_prompt(
+        "MainActivity", "<x/>", "My Notes",
+        string_hints="add_task -> Add Task\nno_tasks -> No Tasks Currently\nsort -> Sort By Deadline",
+    )
+    assert "SOURCE-LANGUAGE LOCK" in prompt
+    assert "this app's language is English" in prompt
+
+
+def test_prompt_locks_output_language_to_chinese_source():
+    prompt = build_page_prompt(
+        "MainActivity", "<x/>", "我的笔记",
+        string_hints="title -> 我的笔记\nempty -> 暂无任务\nadd -> 添加任务",
+    )
+    assert "this app's language is Chinese" in prompt
+
+
+def test_prompt_no_language_lock_without_signal():
+    # no string hints / empty layout -> don't force a language
+    prompt = build_page_prompt("Solo", "", "App")
+    assert "SOURCE-LANGUAGE LOCK" not in prompt
+
+
 def test_fixups_cover_known_arkui_mistakes():
     code = (
         "Blank()\n"
@@ -192,6 +216,35 @@ def test_sanitize_dedupes_duplicate_entry():
     code = "@Entry\n@Entry\n@Component\nstruct Home {\n  build() {\n    Text('x')\n  }\n}\n"
     out = sanitize_page(code, "Home", {"foreground"})
     assert out.count("@Entry") == 1
+
+
+def test_sanitize_no_duplicate_component_with_inline_decorator():
+    # Regression (Foodium PostDetailsActivity): the model emitted `@Entry` + a separate
+    # `@Component` line + `@Component export struct X` (inline). _ensure_single_entry must
+    # see the inline @Component and NOT add a third decorator -> exactly one @Component.
+    code = "@Entry\n@Component export struct PostDetailsActivity {\n  build() {\n    Text('x')\n  }\n}\n"
+    out = sanitize_page(code, "PostDetailsActivity", {"foreground"})
+    assert out.count("@Component") == 1
+    assert out.count("@Entry") == 1
+
+
+def test_prompt_locks_router_param_string_coercion():
+    # Regression (Foodium): detail page never loaded because postId was passed as a string
+    # but compared with `===` against a number field. The nav clause must mandate string
+    # params + String()-coerced id lookups.
+    prompt = build_page_prompt(
+        "MainActivity", "<x/>", "Foodium",
+        routes=["pages/Index", "pages/MainActivity", "pages/PostDetailsActivity"],
+    )
+    assert "ARRIVE AS STRINGS" in prompt
+    assert "String(r.id)" in prompt
+
+
+def test_prompt_wires_share_adapter_not_todo():
+    # Regression (Foodium): a Share button was stubbed `// TODO: share post` while the real
+    # ShareCompat adapter existed. The capabilities clause must name ShareCompat.shareText.
+    prompt = build_page_prompt("PostDetailsActivity", "<x/>", "Foodium")
+    assert "ShareCompat.shareText" in prompt
 
 
 def test_sanitize_entry_only_on_main_struct():

@@ -65,6 +65,9 @@ def _navigation_section(page_name: str, routes: list[str] | None) -> str:
         f"`router.pushUrl({{ url: 'pages/Target', params: {{ uri: item.uri, name: item.name }} }})`. A detail/viewer "
         f"page MUST read them - `const p = router.getParams() as Record<string, string>;` in `aboutToAppear` - and "
         f"render THAT item (e.g. `Image(p.uri)`), never a hardcoded or random one. Without this the detail page opens blank.\n"
+        f"- Route params ARRIVE AS STRINGS: type them `Record<string, string>` (never `Record<string, number>`). When you look a "
+        f"record up by id, coerce BOTH sides to string - `rows.find(r => String(r.id) === p.id)` - never `r.id === this.id` with a "
+        f"number field set from a string param (strict `===` across number/string is always false, so the detail page would stay stuck on 'Loading...').\n"
     )
 
 
@@ -111,6 +114,33 @@ def _room_persistence_clause(db_adapters: list[str] | None, db_entities: str) ->
     )
 
 
+def _detect_source_language(*texts: str) -> str:
+    """Best-effort dominant language of the source UI strings, to lock output language.
+
+    CJK characters are information-dense (one char ~ one word), so even a modest count
+    means a Chinese app; otherwise a body of Latin letters means English. Unknown -> "".
+    """
+    sample = " ".join(t[:6000] for t in texts if t)
+    cjk = sum(1 for ch in sample if "一" <= ch <= "鿿")
+    latin = sum(1 for ch in sample if "a" <= ch.lower() <= "z")
+    if cjk >= 4:
+        return "Chinese"
+    if latin >= 8:
+        return "English"
+    return ""
+
+
+def _language_lock_clause(lang: str) -> str:
+    if not lang:
+        return ""
+    return (
+        f"- SOURCE-LANGUAGE LOCK: this app's language is {lang}. EVERY string you output - visible labels, "
+        f"toolbar/section titles, tab names, button text, empty-state messages, AND any invented sample/seed "
+        f"data - MUST be written in {lang}. Never translate or switch the UI to another language (an English "
+        f"app stays English; a Chinese app stays Chinese). This overrides any instinct to localize."
+    )
+
+
 def build_page_prompt(
     page_name: str,
     layout_source: str,
@@ -127,6 +157,7 @@ def build_page_prompt(
     hints = f"\nString resources you may reference (name -> value):\n{string_hints}\n" if string_hints else ""
     nav_section = _navigation_section(page_name, routes)
     room_clause = _room_persistence_clause(db_adapters, db_entities)
+    lang_lock = _language_lock_clause(_detect_source_language(string_hints, layout_source))
     return f"""Migrate this Android {source_kind} screen into a single HarmonyOS ArkUI page.
 
 App: {app_label}
@@ -136,6 +167,7 @@ HARD REQUIREMENTS:
 - Output one complete, compilable ArkTS file: `@Entry @Component struct {page_name} {{ build() {{ ... }} }}`.
 - PRESERVE every visible text string EXACTLY (Chinese stays Chinese, e.g. "检查新版本", "版本：1.0.0"). Never translate or anglicize UI text.
 - Keep the app's ORIGINAL language. When you must invent tab labels, buttons, or sample data not given in the source, write them in the SAME language as the provided string resources / existing text (an English app stays English; a Chinese app stays Chinese). Do not switch languages.
+{lang_lock}
 - Faithfully reproduce the visual layout: orientation, ordering, alignment/gravity, spacing, bold/size emphasis, lists/grids, toolbars, inputs, buttons, images.
 - Use real ArkUI components only: Text, Button, Image, Column, Row, Stack, Flex, List/ListItem, Grid/GridItem, TextInput, Checkbox, Toggle, Scroll, Divider, Tabs.
 - Lists/RecyclerView/GridView: render with `ForEach`. PREFER persisted data: if the list items come from a Room DB (the source has @Entity/@Dao/RoomDatabase for them, e.g. notes/tasks/records), bind to the generated DAO adapter so data SURVIVES app restart instead of a resettable mock array (see ROOM PERSISTENCE below). Only when there is NO DB behind the list, render over a small local `@State` sample array of realistic items derived from the screen's domain (NOT generic "Sample Item").
@@ -144,7 +176,8 @@ HARD REQUIREMENTS:
 - Host screens (ViewPager / TabLayout / BottomNavigation + fragments, or a fragment container): show the real content INLINE by importing each hosted screen as a component from its sibling file `./FragmentXxx` and rendering `FragmentXxx()` inside that tab/area. Pick the matching page name from the route list. Never fill a tab with just a label string.
 - DEVICE PHOTO/VIDEO LIBRARY (system data, NOT mock): if the source reads the device gallery via Android MediaStore (e.g. `MediaStore.Images`/`MediaStore.Video`, `ContentResolver.query(...EXTERNAL_CONTENT_URI...)`, a media/photo fetcher), DO NOT fabricate a sample array. Read the REAL device library: `import {{ MediaStoreCompat, DeviceMedia }} from '../platform/MediaStoreCompat'` and `import {{ common }} from '@kit.AbilityKit'`; declare `@State mediaList: DeviceMedia[] = []`; in `aboutToAppear` call `MediaStoreCompat.loadMedia(getContext(this) as common.UIAbilityContext).then((r: DeviceMedia[]) => {{ this.mediaList = r }})`; render the grid/list with `Image(item.uri)` (and a video badge when `item.isVideo`). This shows the user's actual photos.
 - DEVICE AUDIO record/playback (system capability, NOT mock): if the source RECORDS audio (`MediaRecorder`/`AudioRecord`), use the real adapter `import {{ AudioRecorderCompat }} from '../platform/AudioRecorderCompat'` and `import {{ common }} from '@kit.AbilityKit'`; hold `private recorder: AudioRecorderCompat = new AudioRecorderCompat()`; on the record button call `this.recorder.start(getContext(this) as common.UIAbilityContext)` and on stop `this.recorder.stop().then((path: string) => {{ ... }})`. If the source PLAYS media (`MediaPlayer`/`ExoPlayer`), use `import {{ AVPlayerCompat }} from '../platform/AVPlayerCompat'`; hold `private player: AVPlayerCompat = new AVPlayerCompat()`; on play call `this.player.load(uri)` / `this.player.play()`, pause `this.player.pause()`, seek `this.player.seek(ms)`. Never fake recording/playback with only a timer or a static progress bar.
-- OTHER DEVICE CAPABILITIES (use the real adapter from ../platform, NOT a mock, when the source uses it): SharedPreferences -> `PreferencesCompat` (settings that persist: `await p.open(getContext(this) as common.Context); await p.putBoolean(k, v)` / `getBoolean`); device sensors (compass/accelerometer/steps) -> `SensorCompat.onOrientation((a)=>{{...}})`; GPS/location -> `LocationCompat.getCurrent(getContext(this) as common.UIAbilityContext)`; take a photo -> `CameraCompat.takePhoto(getContext(this) as common.Context)`; local notification -> `NotificationCompat.notify(id, title, text)`; vibrate -> `VibratorCompat.vibrate(ms)`; clipboard -> `ClipboardCompat.setText/getText`; device info (`Build.MODEL`/`MANUFACTURER`/`BRAND`/`VERSION.*`) -> `DeviceInfoCompat` (REAL device values, NEVER hardcode a fake model/brand like 'HUAWEI'/'NOH-AN00'): one field via `DeviceInfoCompat.model()/brand()/manufacturer()/osVersion()/sdkVersion()/securityPatch()/buildType()`, or for an "about phone / device specs" list render `DeviceInfoCompat.all()` which returns real `{{ label, value }}` rows - do NOT read raw `deviceInfo.*` fields by guessing their names. Each adapter file is a sibling you import by name (e.g. `import {{ PreferencesCompat }} from '../platform/PreferencesCompat'`).
+- OTHER DEVICE CAPABILITIES (use the real adapter from ../platform, NOT a mock, when the source uses it): SharedPreferences -> `PreferencesCompat` (settings that persist: `await p.open(getContext(this) as common.Context); await p.putBoolean(k, v)` / `getBoolean`); device sensors (compass/accelerometer/steps) -> `SensorCompat.onOrientation((a)=>{{...}})`; GPS/location -> `LocationCompat.getCurrent(getContext(this) as common.UIAbilityContext)`; take a photo -> `CameraCompat.takePhoto(getContext(this) as common.Context)`; local notification -> import `{{ NotificationCompat }}` from '../platform/NotificationCompat', call `NotificationCompat.requestEnable()` once in `aboutToAppear`, then on the trigger call `NotificationCompat.notify(id, title, text)` (EXACTLY these 3 args: a number id and two strings, no icon/channel/builder); vibrate -> `VibratorCompat.vibrate(ms)`; clipboard -> `ClipboardCompat.setText/getText`; share / send (Android `Intent.ACTION_SEND`, a Share button/menu) -> `ShareCompat.shareText(getContext(this) as common.UIAbilityContext, text)` (build `text` from the item being shared, e.g. its title + body/url) - NEVER leave a Share action as a `// TODO`; device info (`Build.MODEL`/`MANUFACTURER`/`BRAND`/`VERSION.*`) -> `DeviceInfoCompat` (REAL device values, NEVER hardcode a fake model/brand like 'HUAWEI'/'NOH-AN00'): one field via `DeviceInfoCompat.model()/brand()/manufacturer()/osVersion()/sdkVersion()/securityPatch()/buildType()`, or for an "about phone / device specs" list render `DeviceInfoCompat.all()` which returns real `{{ label, value }}` rows - do NOT read raw `deviceInfo.*` fields by guessing their names; network / connectivity status (`ConnectivityManager`/`NetworkCapabilities`/`isConnected`) -> `await ConnectivityCompat.isConnected()` (a real `Promise<boolean>`; render the ACTUAL connected/offline state - e.g. "Connected with Internet" vs "No Network" - never hardcode a status). Each adapter file is a sibling you import by name (e.g. `import {{ PreferencesCompat }} from '../platform/PreferencesCompat'`).
+- ADAPTER CALLS ARE REAL CODE, NOT PSEUDOCODE: whenever one of the capabilities above applies, you MUST `import` the named `../platform/XxxCompat` adapter at the top of the file and ACTUALLY CALL it in the relevant handler / lifecycle method. NEVER stub it with a commented-out `// would be ...` line, a `console.log`/`console.info`, an empty body, or a TODO. The adapter already exists and compiles; use the EXACT method names given (do not invent extra args or methods like `createChannel`).
 - Media (static/UI images only): reference `$r('app.media.NAME')` where NAME is one of: {media_list}. If unsure, omit the image or use `$r('app.media.foreground')`. Never invent other resource names.
 - Do NOT emit any "debug navigation", route-button list, or migration-scaffold UI.
 {nav_section}- Unknown click actions with no matching target page: use empty `() => {{}}` with a `// TODO` comment.
@@ -255,7 +288,10 @@ def _ensure_single_entry(code: str, page_name: str) -> str:
     indent = re.match(r"[ \t]*", lines[idx]).group(0)
     block = lines[start:idx]
     insert = [indent + "@Entry"]
-    if not any("@Component" in b for b in block):
+    # @Component may sit on its own decorator line OR inline on the struct line
+    # (`@Component export struct X`); count both so we never emit a duplicate.
+    has_component = any("@Component" in b for b in block) or "@Component" in lines[idx]
+    if not has_component:
         insert.append(indent + "@Component")
     lines[start:start] = insert
     return "\n".join(lines)

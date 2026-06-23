@@ -32,7 +32,11 @@ def load_llm_config_from_env() -> LLMConfig:
             os.getenv("ANTHROPIC_MODEL", os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "mimo-v2.5-pro")),
         ),
         auth_env=auth_env,
-        timeout_seconds=int(os.getenv("ANDROID2HARMONY_LLM_TIMEOUT", "180")),
+        # Reasoning models (mimo) spend most of the call on hidden reasoning before
+        # emitting bytes; under page-generation concurrency a single call can exceed
+        # 180s and time out, dropping that page to the low-fidelity rule template.
+        # 300s gives slow calls room to finish (observed: timeout@181s, retry ok@35s).
+        timeout_seconds=int(os.getenv("ANDROID2HARMONY_LLM_TIMEOUT", "300")),
     )
 
 

@@ -41,8 +41,12 @@ class SystemApiMapTest(unittest.TestCase):
         # device-verified capabilities
         self.assertIn("图片/视频库", cov.get("done", []))
         self.assertIn("录音/音频采集", cov.get("done", []))
-        # the bulk of capabilities have a real adapter that compiles against the SDK
-        self.assertGreaterEqual(len(cov.get("compiled", [])), 10)
+        # device-verified ("done") set keeps growing as we validate on hardware
+        self.assertGreaterEqual(len(cov.get("done", [])), 5)
+        # the bulk of capabilities have a real adapter that compiles against the SDK,
+        # whether still pending-device (compiled), bound (wired), or device-verified (done)
+        real = len(cov.get("done", [])) + len(cov.get("wired", [])) + len(cov.get("compiled", []))
+        self.assertGreaterEqual(real, 15)
 
 
 if __name__ == "__main__":

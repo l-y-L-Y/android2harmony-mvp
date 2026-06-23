@@ -138,10 +138,10 @@
       "harmony_symbols": ["notificationManager.publish(NotificationRequest)", "requestEnableNotification"],
       "permissions": [],
       "adapter_module": "NotificationCompat",
-      "status": "compiled",
+      "status": "done",
       "priority": 5,
       "probe_app": "提醒 / 待办",
-      "notes": "首次需 requestEnableNotification 拉起授权;本地通知无需声明权限。"
+      "notes": "首次需 requestEnableNotification 拉起授权;本地通知无需声明权限。2026-06-23 真机(Pura 90 Pro,fresh 项目 vgates/Notification-App):requestEnable() 拉起系统授权框→授权后 notify() publish 成功→通知栏出现真实通知(标题 My notification、正文保留英文)。配套修复:prompt 加'适配器必须真调用,禁注释/console.log/TODO 占位'通用规则(否则 LLM 把 notify 注释成 //would be + console.info)+ 通知条款写死(精确 import+requestEnable+3 参 notify)。"
     },
     {
       "id": "vibration",
@@ -250,10 +250,10 @@
       "harmony_symbols": ["connection.hasDefaultNet", "connection.getNetCapabilities", "on('netAvailable')"],
       "permissions": ["ohos.permission.GET_NETWORK_INFO"],
       "adapter_module": "ConnectivityCompat",
-      "status": "compiled",
+      "status": "done",
       "priority": 5,
       "probe_app": "任意需判断在线的本地App",
-      "notes": "仅判断连通性,不涉及后端请求。"
+      "notes": "仅判断连通性,不涉及后端请求。2026-06-23 真机(Pura 90 Pro,fresh 项目 nameisjayant/Check-Network-Connectivity):页面真 await ConnectivityCompat.isConnected()(connection.hasDefaultNet)按布尔设文案,显示真实 'Connected with Internet';权限 INTERNET+GET_NETWORK_INFO 自动注入 module.json5。配套:prompt 加 connectivity→ConnectivityCompat.isConnected 条款(原缺,LLM 会 mock)。"
     },
     {
       "id": "device_info",
