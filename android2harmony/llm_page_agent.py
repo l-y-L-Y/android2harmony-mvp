@@ -101,7 +101,13 @@ def _room_persistence_clause(db_adapters: list[str] | None, db_entities: str) ->
             "if rows.length === 0, SEED by awaiting `this.dao.persistRow(item)` for each realistic sample item, then `this.items = await this.dao.queryAll() as ItemType[]`; "
             "else `this.items = rows as ItemType[]`. ADD via `await this.dao.persistRow(newItem)` then reload queryAll; DELETE via `await this.dao.deleteRow('id', idValue)` then reload. "
             "CRITICAL: if THIS screen shows a list/RecyclerView/grid of those records - even indirectly through a ViewModel/LiveData/Flow/Repository/RecyclerView.Adapter (e.g. the source references the entity type, a `*Adapter`, or `viewModel.<items>.observe(...)`) - you MUST fill it from `await this.dao.queryAll()` in aboutToAppear and render those rows with ForEach; NEVER hardcode a sample/mock array in place of the real persisted data. "
-            "Do NOT keep the list only in a local array that resets on restart."
+            "Do NOT keep the list only in a local array that resets on restart. "
+            "REFRESH ON RETURN: a list screen that navigates to an add/edit/detail screen MUST reload in `onPageShow()` (`this.items = await this.dao.queryAll() as ItemType[]`), "
+            "NOT only in aboutToAppear - aboutToAppear fires once and does NOT run again when the user returns via router.back(), so a freshly added/edited row would stay invisible until restart. Keep one-time SEED logic in aboutToAppear, but put the queryAll reload in onPageShow. "
+            "DETAIL/SINGLE-RECORD screen (opened from a list, receives an item id via router params): RE-QUERY the full record from the DB here - "
+            "`const p = router.getParams() as Record<string, string>; this.dao.setContext(getContext(this) as common.Context); "
+            "const rows = await this.dao.queryAll() as ItemType[]; const item = rows.find((r: ItemType) => String(r.id) === p.id); if (item) { ... }` - "
+            "and render item's fields. Do NOT expect the record's non-id fields (name/title/description/etc.) to arrive in router params: a list tap reliably passes ONLY the id, so reading `params.name`/`params.description` yields blanks and the detail screen renders empty."
         )
     return (
         "- ROOM/SQLITE PERSISTENCE (data must survive restart; system storage, NOT mock): when the source persists the list in Room, "
@@ -141,6 +147,34 @@ def _language_lock_clause(lang: str) -> str:
     )
 
 
+def _backend_api_clause(http_methods: str, base_url: str) -> str:
+    """The BACKEND API prompt bullet. When the project has real Retrofit endpoints, name the
+    live HTTP client + the exact method names so a server-backed screen fetches real data
+    instead of seeding a mock array (the failure mode that left transpiled clients showing
+    only fake data). Empty when the app has no backend."""
+    if not http_methods:
+        return ""
+    where = f" at `{base_url}`" if base_url else ""
+    return (
+        "- BACKEND API (REAL network call, NOT a mock array): this app HAS a generated HTTP client that calls the live backend"
+        + where + ". If THIS screen shows data fetched from the server - the source uses the Retrofit service, a Repository, or a "
+        "ViewModel/UseCase that calls the API, or references a network response/DTO model - you MUST fetch it for real; do NOT seed a "
+        "hardcoded sample/mock array. Import `import { MigratedHttpClient, HttpParams } from '../network/HttpClient'`; hold "
+        "`private http: MigratedHttpClient = new MigratedHttpClient()`; declare a typed `interface` for the rows and `@State items: Row[] = []` "
+        "(plus `@State loading: boolean = true`). In an async aboutToAppear, build params if the endpoint needs them "
+        "(`const p = new HttpParams(); p.set('limit', 20);`), call the matching method, then map the JSON to your rows inside try/catch: "
+        "`try { const resp = await this.http.<method>(p) as Record<string, Object>; const arr = (resp['results'] ?? resp['items'] ?? resp['data'] ?? resp) as Object[]; "
+        "this.items = arr.map((o: Object) => { const r = o as Record<string, Object>; return { ... } as Row; }); } catch (e) { } this.loading = false;`. "
+        "Available endpoints (call by these EXACT names on `this.http`): " + http_methods + ". "
+        "Infer the response shape from the source's DTO/response model (a list usually lives under a `results`/`items`/`data` field; a bare array maps directly; "
+        "a detail endpoint with a `{path}` placeholder takes that id via `p.set('<placeholder>', id)`). "
+        "DETAIL/SINGLE-ITEM screen (opened from a list, receives an id/name via router params): you MUST still CALL the single-item endpoint (the method whose path has a `{placeholder}`) "
+        "in aboutToAppear with that id and populate EVERY displayed field from the response - do NOT leave numeric stats/weight/height at their default 0/'' by only reading params. "
+        "Parse NESTED fields too: e.g. a stats array `stats: [{ base_stat: number, stat: { name: string } }]` -> find the entry whose `stat.name` matches and read `base_stat`; top-level scalars like `weight`/`height` read directly. "
+        "NEVER replace a real API call with a static mock list."
+    )
+
+
 def build_page_prompt(
     page_name: str,
     layout_source: str,
@@ -151,12 +185,15 @@ def build_page_prompt(
     routes: list[str] | None = None,
     db_adapters: list[str] | None = None,
     db_entities: str = "",
+    http_methods: str = "",
+    http_base_url: str = "",
 ) -> str:
     media_list = ", ".join(sorted(available_media)) if available_media else "foreground, background"
     fence = "xml" if source_kind == "xml" else "kotlin"
     hints = f"\nString resources you may reference (name -> value):\n{string_hints}\n" if string_hints else ""
     nav_section = _navigation_section(page_name, routes)
     room_clause = _room_persistence_clause(db_adapters, db_entities)
+    backend_clause = _backend_api_clause(http_methods, http_base_url)
     lang_lock = _language_lock_clause(_detect_source_language(string_hints, layout_source))
     return f"""Migrate this Android {source_kind} screen into a single HarmonyOS ArkUI page.
 
@@ -172,6 +209,7 @@ HARD REQUIREMENTS:
 - Use real ArkUI components only: Text, Button, Image, Column, Row, Stack, Flex, List/ListItem, Grid/GridItem, TextInput, Checkbox, Toggle, Scroll, Divider, Tabs.
 - Lists/RecyclerView/GridView: render with `ForEach`. PREFER persisted data: if the list items come from a Room DB (the source has @Entity/@Dao/RoomDatabase for them, e.g. notes/tasks/records), bind to the generated DAO adapter so data SURVIVES app restart instead of a resettable mock array (see ROOM PERSISTENCE below). Only when there is NO DB behind the list, render over a small local `@State` sample array of realistic items derived from the screen's domain (NOT generic "Sample Item").
 {room_clause}
+{backend_clause}
 - If the source includes Activity/Fragment CODE, reproduce what it actually shows: real tab titles, the fragments a ViewPager/TabLayout/BottomNavigation hosts, list item shape, and data. Do NOT invent unrelated tabs.
 - Host screens (ViewPager / TabLayout / BottomNavigation + fragments, or a fragment container): show the real content INLINE by importing each hosted screen as a component from its sibling file `./FragmentXxx` and rendering `FragmentXxx()` inside that tab/area. Pick the matching page name from the route list. Never fill a tab with just a label string.
 - DEVICE PHOTO/VIDEO LIBRARY (system data, NOT mock): if the source reads the device gallery via Android MediaStore (e.g. `MediaStore.Images`/`MediaStore.Video`, `ContentResolver.query(...EXTERNAL_CONTENT_URI...)`, a media/photo fetcher), DO NOT fabricate a sample array. Read the REAL device library: `import {{ MediaStoreCompat, DeviceMedia }} from '../platform/MediaStoreCompat'` and `import {{ common }} from '@kit.AbilityKit'`; declare `@State mediaList: DeviceMedia[] = []`; in `aboutToAppear` call `MediaStoreCompat.loadMedia(getContext(this) as common.UIAbilityContext).then((r: DeviceMedia[]) => {{ this.mediaList = r }})`; render the grid/list with `Image(item.uri)` (and a video badge when `item.isVideo`). This shows the user's actual photos.
@@ -206,12 +244,15 @@ def generate_arkui_page(
     call_fn: Callable[[str, str, int], str] | None = None,
     db_adapters: list[str] | None = None,
     db_entities: str = "",
+    http_methods: str = "",
+    http_base_url: str = "",
 ) -> str:
     """Generate one ArkUI page from an Android screen. Raises RuntimeError on failure."""
     call = call_fn or call_llm
     prompt = build_page_prompt(
         page_name, layout_source, app_label, source_kind, string_hints, available_media, routes,
         db_adapters=db_adapters, db_entities=db_entities,
+        http_methods=http_methods, http_base_url=http_base_url,
     )
     media = _media_lower(available_media)
 

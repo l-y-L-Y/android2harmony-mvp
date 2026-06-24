@@ -30,6 +30,15 @@ _LEAF_WIDGETS = (
 
 PAGE_CLASSES = ("rich", "minimal", "near_empty", "empty", "placeholder")
 
+# Markers exclusive to the rule-based template fallback (xml_layout_translator._page_shell),
+# emitted when LLM page generation failed/timed out and the page degraded to a low-fidelity
+# stub (mock `MigratedListItem` data, page-name-as-title, string app.media paths). LLM pages
+# route via `@kit.ArkUI`'s `router` and never touch these; the launcher Index uses only
+# `NavigationCompat.replace`, not `.params`/`MigratedListItem` -- so neither false-positives.
+# A fallback page can score structurally "rich" (it has a Grid/ForEach) yet be unfaithful, so
+# we track it as its own dimension and exclude it from the faithful-rich ratio.
+_FALLBACK_MARKERS = ("interface MigratedListItem", "NavigationCompat.params(")
+
 # Names that are NOT real screens: RecyclerView item templates (adapter_*.xml) and
 # intentional empty-state / loading views. These are near-empty BY DESIGN, so they must
 # not count against the blank-like ratio (which should reflect real screens only).
@@ -49,6 +58,7 @@ class PageMetric:
     embedded: int
     content: int
     screen: bool
+    fallback: bool = False
 
 
 def _struct_name(code: str) -> str:
@@ -98,7 +108,8 @@ def classify_page(code: str, page_names: tuple[str, ...] = ()) -> PageMetric:
     else:
         klass = "rich"
     screen = _NON_SCREEN.search(self_name or "") is None
-    return PageMetric("", klass, texts, images, lists, inputs, embedded, content, screen)
+    fallback = any(marker in code for marker in _FALLBACK_MARKERS)
+    return PageMetric("", klass, texts, images, lists, inputs, embedded, content, screen, fallback)
 
 
 def project_page_metrics(project_dir: Path) -> dict:
@@ -117,7 +128,10 @@ def project_page_metrics(project_dir: Path) -> dict:
     screens = [m for m in metrics if m.screen]
     # "blank-like" counts only real screens -> item templates / empty-state views excluded
     blank_like = sum(1 for m in screens if m.klass in _BLANK_LIKE)
-    rich = sum(1 for m in screens if m.klass == "rich")
+    # rule-template fallbacks may LOOK rich (Grid/ForEach over mock data) but are unfaithful,
+    # so they do not count toward the faithful-rich ratio.
+    fallback_pages = sum(1 for m in screens if m.fallback)
+    rich = sum(1 for m in screens if m.klass == "rich" and not m.fallback)
     nscreen = len(screens)
     return {
         "project": Path(project_dir).name,
@@ -127,6 +141,8 @@ def project_page_metrics(project_dir: Path) -> dict:
         "byClass": by_class,
         "blankLikePages": blank_like,
         "blankLikeRatio": round(blank_like / nscreen, 3) if nscreen else 0.0,
+        "fallbackPages": fallback_pages,
+        "fallbackRatio": round(fallback_pages / nscreen, 3) if nscreen else 0.0,
         "richRatio": round(rich / nscreen, 3) if nscreen else 0.0,
         "pages": [asdict(m) for m in metrics],
     }
@@ -138,14 +154,20 @@ def render_metrics_md(report: dict) -> str:
         "",
         f"- 屏幕页数：{report['screenPages']}（另排除非屏幕页 {report['excludedNonScreen']} 个：列表项/空状态）",
         f"- 空白/占位嫌疑屏幕：{report['blankLikePages']}（占比 {report['blankLikeRatio']:.0%}）",
-        f"- 富内容屏幕占比：{report['richRatio']:.0%}",
+        f"- 规则模板兜底屏幕（LLM 失败/超时降级，低保真，建议复核）：{report.get('fallbackPages', 0)}（占比 {report.get('fallbackRatio', 0):.0%}）",
+        f"- 富内容屏幕占比（已剔除兜底页）：{report['richRatio']:.0%}",
         "- 分类：" + "，".join(f"{c}={report['byClass'][c]}" for c in PAGE_CLASSES),
         "",
         "| 页面 | 分类 | 文本 | 图片 | 列表 | 交互 | 嵌入 | 屏幕 |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for p in report["pages"]:
-        flag = " ⚠️" if p["screen"] and p["klass"] in _BLANK_LIKE else ""
+        if p.get("fallback"):
+            flag = " ⚠️兜底"
+        elif p["screen"] and p["klass"] in _BLANK_LIKE:
+            flag = " ⚠️"
+        else:
+            flag = ""
         lines.append(
             f"| {p['name']} | {p['klass']}{flag} | {p['texts']} | {p['images']} | "
             f"{p['lists']} | {p['inputs']} | {p['embedded']} | {'是' if p['screen'] else '否'} |"

@@ -41,6 +41,26 @@ interface TaskDao {
             self.assertIn("this.applyOrderBy(rows, sql)", code)
             self.assertIn("this.applyLimit(rows, sql, args)", code)
 
+    def test_resultset_rows_preserve_numeric_column_types(self):
+        # Regression (Expenso crash): reading a numeric column as a string makes the page do
+        # `0 + "5000"` -> "05000" -> `.toFixed` undefined -> TypeError. The row builder must
+        # read INTEGER/REAL columns with the typed getters, not getString for everything.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dao = root / "app" / "src" / "main" / "java" / "TxnDao.kt"
+            dao.parent.mkdir(parents=True)
+            dao.write_text(
+                "@Dao\ninterface TxnDao {\n  @Query(\"SELECT * FROM txn\")\n"
+                "  suspend fun all(): List<Txn>\n}\n",
+                encoding="utf-8",
+            )
+            code = _dao_adapters_ets(self._project(root, [dao]))
+            self.assertIn("getColumnTypeSync", code)
+            self.assertIn("relationalStore.ColumnType.INTEGER", code)
+            self.assertIn("relationalStore.ColumnType.REAL", code)
+            self.assertIn("getLong(index)", code)
+            self.assertIn("getDouble(index)", code)
+
     def test_persistence_chain_matches_real_room_table(self):
         # MyNotes-shaped: non-suspend Flow @Query, @Entity(tableName=...), and a multi-line
         # comment between fields. All three used to break persistence.

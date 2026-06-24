@@ -152,6 +152,8 @@ def generate_harmony_project(
     page_names = {r.split("/")[-1] for r in pipeline.routes}  # fragments now generated as pages
     db_adapter_names = _dao_adapter_names(project)  # exact DAO adapter class names for the page prompt
     db_entity_fields = _entity_field_summary(project)  # real entity columns so the LLM won't invent fields
+    http_methods = _http_method_summary(project)  # real backend endpoints -> pages call the live API, not mock
+    http_base_url = _discover_retrofit_base_url(project) or ""
     # (route, page_name, source_kind, source_path)
     llm_jobs: list[tuple[str, str, str, Path]] = []
     placeholder_pages: list[str] = []  # routes with no Android source to migrate from
@@ -225,6 +227,7 @@ def generate_harmony_project(
                 page_name=page_name, layout_source=source, app_label=app_label,
                 source_kind=source_kind, string_hints=string_hints, available_media=available_media,
                 routes=pipeline.routes, db_adapters=db_adapter_names, db_entities=db_entity_fields,
+                http_methods=http_methods, http_base_url=http_base_url,
             )
             return route, page_name, code, ""
         except Exception as exc:
@@ -232,33 +235,50 @@ def generate_harmony_project(
 
     if llm_jobs:
         job_kinds = {j[0]: (j[2], j[3]) for j in llm_jobs}
+        job_by_route = {j[0]: j for j in llm_jobs}
         workers = max(1, int(os.getenv("ANDROID2HARMONY_LLM_CONCURRENCY", "4")))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for route, page_name, code, err in pool.map(_gen_one, llm_jobs):
-                if code is not None:
-                    llm_refined_count += 1
-                    write(f"entry/src/main/ets/{route}.ets", code)
-                    llm_runner.records.append(LLMAgentCall(
-                        agent=f"ui-page-agent:{page_name}", status="used", model=llm_runner.model,
-                        reason="llm page generated from source", prompt_chars=0,
-                        response_chars=len(code), prompt="", response="",
-                    ))
+            results = list(pool.map(_gen_one, llm_jobs))
+        # Pages that failed every concurrent attempt are usually timeout victims of LLM load
+        # (a core screen degrading to the low-fidelity rule template looks broken on device),
+        # not genuinely ungeneratable. Give each one ONE single-threaded retry - no concurrency
+        # contention, full timeout - before falling back to the template.
+        retry_routes = [r for (r, _pn, code, _e) in results if code is None]
+        if retry_routes:
+            retried = {r: _gen_one(job_by_route[r]) for r in retry_routes}
+            results = [retried.get(res[0], res) for res in results]
+        for route, page_name, code, err in results:
+            if code is not None:
+                llm_refined_count += 1
+                write(f"entry/src/main/ets/{route}.ets", code)
+                llm_runner.records.append(LLMAgentCall(
+                    agent=f"ui-page-agent:{page_name}", status="used", model=llm_runner.model,
+                    reason="llm page generated from source", prompt_chars=0,
+                    response_chars=len(code), prompt="", response="",
+                ))
+            else:
+                llm_failures.append(f"{route}: {err}")
+                source_kind, source_path = job_kinds[route]
+                if source_kind == "xml":
+                    fallback = translate_layout_file(source_path, page_name, android_strings, pipeline.routes, store_names=store_names)
                 else:
-                    llm_failures.append(f"{route}: {err}")
-                    source_kind, source_path = job_kinds[route]
-                    if source_kind == "xml":
-                        fallback = translate_layout_file(source_path, page_name, android_strings, pipeline.routes, store_names=store_names)
-                    else:
-                        fallback = _generated_page_ets(route, project.name, pipeline.routes)
-                    write(f"entry/src/main/ets/{route}.ets", fallback)
-                    llm_runner.records.append(LLMAgentCall(
-                        agent=f"ui-page-agent:{page_name}", status="fallback", model=llm_runner.model,
-                        reason=f"{err}; kept rule-based page", prompt_chars=0,
-                        response_chars=0, prompt="", response="",
-                    ))
+                    fallback = _generated_page_ets(route, project.name, pipeline.routes)
+                write(f"entry/src/main/ets/{route}.ets", fallback)
+                llm_runner.records.append(LLMAgentCall(
+                    agent=f"ui-page-agent:{page_name}", status="fallback", model=llm_runner.model,
+                    reason=f"{err}; kept rule-based page", prompt_chars=0,
+                    response_chars=0, prompt="", response="",
+                ))
+    # Replace local fragment STUBS (a host that defines its own empty `struct FragmentX`
+    # instead of importing the real sibling page) with the real component, so embedded
+    # screens render their actual content instead of a 'Main Content' placeholder.
+    _inline_sibling_stub_structs(output_dir / "entry" / "src" / "main" / "ets" / "pages")
     # Auto-wire imports for embedded sibling fragment components (hosts that render
     # FragmentXxx() inline often omit the import).
     wire_sibling_imports(output_dir / "entry" / "src" / "main" / "ets" / "pages")
+    # Repair navigation the model invented (adapter-as-route like ShareCompat, or jumps to
+    # pages that were never generated) so deep navigation never hits "page does not exist".
+    _repair_navigation_targets(output_dir / "entry" / "src" / "main" / "ets" / "pages")
     # Write the page map only for routes whose .ets actually exists, so one failed page
     # cannot break the whole build with a "Page does not exist" resource error.
     existing_routes = [r for r in pipeline.routes if (output_dir / "entry" / "src" / "main" / "ets" / f"{r}.ets").exists()]
@@ -1721,7 +1741,12 @@ def _domain_models_ets(project: AndroidProject) -> str:
 
 
 def _http_client_ets(project: AndroidProject) -> str:
-    base_url = _discover_retrofit_base_url(project) or "https://example.com/"
+    real_base = _discover_retrofit_base_url(project)
+    base_url = real_base or "https://example.com/"
+    # A real, discoverable backend -> hit it live by default so the transpiled client shows
+    # actual server data, not fixtures. Only fall back to MockServer when there is no real
+    # endpoint to call. Flip NetworkConfig.useMock=true to force offline fixtures.
+    use_mock_default = "false" if real_base else "true"
     methods = _discover_retrofit_methods(project)
     method_blocks: list[str] = []
     for item in methods:
@@ -1744,7 +1769,7 @@ def _http_client_ets(project: AndroidProject) -> str:
 import {{ MockServer }} from '../common/MockServer';
 
 export class NetworkConfig {{
-  static useMock: boolean = true;
+  static useMock: boolean = {use_mock_default};
 }}
 
 export class HttpParams {{
@@ -2108,9 +2133,22 @@ function resultSetToRows(resultSet: relationalStore.ResultSet): Object[] {
       const row: Record<string, Object> = {};
       names.forEach((name: string, index: number) => {
         try {
-          row[name] = resultSet.getString(index);
+          // Preserve real column types: a numeric column read as a string breaks numeric ops
+          // in the page (e.g. `0 + "5000"` -> "05000" -> `.toFixed` undefined -> crash).
+          const ct: relationalStore.ColumnType = resultSet.getColumnTypeSync(index);
+          if (ct === relationalStore.ColumnType.INTEGER) {
+            row[name] = resultSet.getLong(index);
+          } else if (ct === relationalStore.ColumnType.REAL) {
+            row[name] = resultSet.getDouble(index);
+          } else {
+            row[name] = resultSet.getString(index);
+          }
         } catch (err) {
-          row[name] = '';
+          try {
+            row[name] = resultSet.getString(index);
+          } catch (err2) {
+            row[name] = '';
+          }
         }
       });
       rows.push(row);
@@ -2584,6 +2622,19 @@ def _discover_retrofit_methods(project: AndroidProject) -> list[dict[str, str]]:
     return methods
 
 
+def _http_method_summary(project: AndroidProject) -> str:
+    """Compact list of the real backend endpoints (from Retrofit) for the page prompt, so a
+    screen that shows server-fetched data calls the live `MigratedHttpClient` method instead
+    of seeding a mock array. e.g. `fetchPokemonList() -> GET pokemon (params: limit, offset)`."""
+    parts: list[str] = []
+    for m in _discover_retrofit_methods(project):
+        desc = f"{m['name']}() -> {m['verb']} {m['path']}"
+        if m.get("params"):
+            desc += f" (params: {m['params']})"
+        parts.append(desc)
+    return "; ".join(parts)
+
+
 def _extract_parenthesized(text: str, open_index: int) -> str:
     if open_index < 0 or open_index >= len(text) or text[open_index] != "(":
         return ""
@@ -2857,6 +2908,168 @@ def wire_sibling_imports(pages_dir: Path) -> int:
             p.write_text(header + text, encoding="utf-8")
             wired += 1
     return wired
+
+
+def _match_paren(s: str, open_idx: int) -> int:
+    """Index of the ')' matching the '(' at open_idx, or -1 (string-literal aware enough
+    for generated ArkTS: skips parens inside '...' and \"...\")."""
+    depth = 0
+    quote = ""
+    i = open_idx
+    while i < len(s):
+        c = s[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "'\"":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+_ROUTER_CALL_RE = re.compile(r"router\.(?:pushUrl|replaceUrl)\s*\(")
+
+
+def _repair_navigation_targets(pages_dir: Path) -> int:
+    """Stop HarmonyOS 'page does not exist' (router 100002) crashes from navigation the
+    model invented. Two deterministic cases:
+    - A capability ADAPTER used as if it were a route (e.g. a Share button rendered as
+      `router.pushUrl({url:'pages/ShareCompat', params:{text: expr}})` - the model copied
+      the page-navigation shape for a share action). Rewrite to the real adapter call
+      `ShareCompat.shareText(getContext(this) as common.UIAbilityContext, expr)`.
+    - Any other navigation whose target page was never generated: neutralize to a no-op so
+      the tap does nothing instead of routing to a missing page and crashing."""
+    if not pages_dir.exists():
+        return 0
+    valid = {f"pages/{p.stem}" for p in pages_dir.glob("*.ets")}
+    fixed = 0
+    for p in pages_dir.glob("*.ets"):
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        orig = text
+        share_needed = False
+        out: list[str] = []
+        i = 0
+        while True:
+            m = _ROUTER_CALL_RE.search(text, i)
+            if not m:
+                out.append(text[i:])
+                break
+            paren_close = _match_paren(text, m.end() - 1)
+            if paren_close < 0:
+                out.append(text[i:])
+                break
+            call = text[m.start():paren_close + 1]
+            urlm = re.search(r"""url:\s*['"](pages/[A-Za-z0-9_]+)['"]""", call)
+            out.append(text[i:m.start()])
+            if urlm and urlm.group(1) not in valid:
+                target = urlm.group(1)
+                short = target.split("/", 1)[1]
+                if short == "ShareCompat":
+                    tm = re.search(r"text:\s*([^,}\n]+)", call) or re.search(r"title:\s*([^,}\n]+)", call)
+                    expr = tm.group(1).strip() if tm else "''"
+                    out.append(f"ShareCompat.shareText(getContext(this) as common.UIAbilityContext, {expr})")
+                    share_needed = True
+                else:
+                    out.append(f"(() => {{ /* removed nav to missing page {target} */ }})()")
+                fixed += 1
+            else:
+                out.append(call)
+            i = paren_close + 1
+        text = "".join(out)
+        if share_needed:
+            if "from '../platform/ShareCompat'" not in text:
+                text = "import { ShareCompat } from '../platform/ShareCompat';\n" + text
+            if "from '@kit.AbilityKit'" not in text:
+                text = "import { common } from '@kit.AbilityKit';\n" + text
+        if text != orig:
+            p.write_text(text, encoding="utf-8")
+    return fixed
+
+
+def _match_brace(s: str, open_idx: int) -> int:
+    """Index of the '}' matching the '{' at open_idx, or -1 (string-literal aware)."""
+    depth = 0
+    quote = ""
+    i = open_idx
+    while i < len(s):
+        c = s[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "'\"`":
+            quote = c
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _inline_sibling_stub_structs(pages_dir: Path) -> int:
+    """A host page that embeds a fragment (`FragmentMain()`) sometimes also defines a LOCAL
+    `struct FragmentMain` stub (e.g. one that renders only 'Main Content') instead of
+    importing the real sibling page - the local definition shadows the import, so the host
+    renders an empty placeholder instead of the actual screen. Excise any local `struct X`
+    whose name matches a real sibling page and that is embedded as `X()`, and import the
+    real one instead."""
+    if not pages_dir.exists():
+        return 0
+    names = {p.stem for p in pages_dir.glob("*.ets")}
+    fixed = 0
+    for p in pages_dir.glob("*.ets"):
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        self_stem = p.stem
+        to_import: set[str] = set()
+        for sib in names:
+            if sib == self_stem:
+                continue
+            # embedded as a component AND declared locally -> a shadowing stub
+            if not re.search(rf"\b{re.escape(sib)}\s*\(\s*\)", text):
+                continue
+            m = re.search(rf"\bstruct\s+{re.escape(sib)}\b", text)
+            if not m:
+                continue
+            brace = text.find("{", m.start())
+            if brace < 0:
+                continue
+            close = _match_brace(text, brace)
+            if close < 0:
+                continue
+            start = text.rfind("\n", 0, m.start()) + 1
+            while True:  # swallow leading decorator lines (@Component / @Entry / export)
+                prev = text.rfind("\n", 0, start - 1) + 1
+                if prev < start and text[prev:start - 1].lstrip().startswith("@"):
+                    start = prev
+                else:
+                    break
+            end = close + 1
+            while end < len(text) and text[end] in "\r\n":
+                end += 1
+            text = text[:start] + text[end:]
+            to_import.add(sib)
+        if to_import:
+            header = "".join(
+                f"import {{ {n} }} from './{n}';\n" for n in sorted(to_import)
+                if f"from './{n}'" not in text
+            )
+            p.write_text(header + text, encoding="utf-8")
+            fixed += 1
+    return fixed
 
 
 def _available_media_names(project: AndroidProject) -> set[str]:

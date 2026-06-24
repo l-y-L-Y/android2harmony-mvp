@@ -240,6 +240,52 @@ def test_prompt_locks_router_param_string_coercion():
     assert "String(r.id)" in prompt
 
 
+def test_prompt_wires_backend_api_for_server_data():
+    # A server-backed app must fetch real data via MigratedHttpClient, not seed a mock array.
+    prompt = build_page_prompt(
+        "PokemonList", "<x/>", "Pokedex",
+        http_methods="fetchPokemonList() -> GET pokemon (params: limit, offset)",
+        http_base_url="https://pokeapi.co/api/v2/",
+    )
+    assert "BACKEND API" in prompt
+    assert "MigratedHttpClient" in prompt
+    assert "fetchPokemonList()" in prompt
+    assert "https://pokeapi.co/api/v2/" in prompt
+    # detail screens must actually CALL the single-item endpoint, not leave stats at 0
+    assert "DETAIL/SINGLE-ITEM screen" in prompt
+    assert "base_stat" in prompt
+
+
+def test_prompt_no_backend_clause_without_endpoints():
+    prompt = build_page_prompt("Solo", "<x/>", "App")
+    assert "BACKEND API" not in prompt
+
+
+def test_prompt_detail_page_requeries_db_by_id():
+    # Regression (DisneyMotions PosterDetailActivity): the detail page read name/description
+    # from router params (which carry only the id) and re-queried nothing -> empty screen.
+    # With a DAO adapter present, the room clause must mandate a re-query by id.
+    prompt = build_page_prompt(
+        "PosterDetailActivity", "<x/>", "DisneyMotions",
+        db_adapters=["PosterDaoAdapter"], db_entities="Poster(id, name, release, playtime)",
+    )
+    assert "DETAIL/SINGLE-RECORD" in prompt
+    assert "RE-QUERY" in prompt
+    assert "ONLY the id" in prompt
+
+
+def test_prompt_list_reloads_on_page_show():
+    # Regression (RoomWordsSample MainActivity): the list loaded only in aboutToAppear, so a
+    # word added on NewWordActivity didn't appear after router.back() until app restart. The
+    # room clause must mandate an onPageShow reload for DB-backed lists.
+    prompt = build_page_prompt(
+        "MainActivity", "<x/>", "RoomWords",
+        db_adapters=["WordDaoAdapter"], db_entities="Word(id, word)",
+    )
+    assert "REFRESH ON RETURN" in prompt
+    assert "onPageShow" in prompt
+
+
 def test_prompt_wires_share_adapter_not_todo():
     # Regression (Foodium): a Share button was stubbed `// TODO: share post` while the real
     # ShareCompat adapter existed. The capabilities clause must name ShareCompat.shareText.

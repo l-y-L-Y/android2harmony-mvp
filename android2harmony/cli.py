@@ -298,9 +298,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Report: {result.output_dir / 'migration-report.md'}")
         from .page_metrics import write_page_metrics
         pm = write_page_metrics(result.output_dir)
+        fb = pm.get('fallbackPages', 0)
+        fb_note = f", {fb} fallback ({pm.get('fallbackRatio', 0):.0%})" if fb else ""
         print(f"Page content: {pm['totalPages']} pages, "
               f"{pm['blankLikePages']} blank-like ({pm['blankLikeRatio']:.0%}), "
-              f"rich {pm['richRatio']:.0%}  -> {result.output_dir / 'page-metrics.md'}")
+              f"rich {pm['richRatio']:.0%}{fb_note}  -> {result.output_dir / 'page-metrics.md'}")
         return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)

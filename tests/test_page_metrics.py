@@ -147,6 +147,84 @@ def test_non_screen_pages_excluded_from_blank_ratio(tmp_path: Path):
     assert report["blankLikeRatio"] == 0.0
 
 
+# Rule-template fallback (xml_layout_translator._page_shell): looks structurally rich
+# (Grid/ForEach over mock items) but is the low-fidelity stub emitted when LLM generation
+# failed/timed out. Must be flagged fallback and NOT counted as faithful-rich.
+TEMPLATE_FALLBACK = """import { NavigationCompat } from '../common/NavigationCompat';
+
+interface MigratedListItem {
+  title: string;
+  imageUrl: string;
+}
+
+@Entry
+@Component
+struct FragmentHome {
+  @State private items: MigratedListItem[] = [{"title": "Zootopia", "imageUrl": "app.media.foreground"}];
+  @State private selectedTitle: string = '';
+
+  onPageShow(): void {
+    const params = NavigationCompat.params(this);
+    if (params && params.title) { this.selectedTitle = params.title; }
+  }
+
+  build() {
+    Column() {
+      Text('FragmentHome').fontSize(24)
+      Grid() {
+        ForEach(this.items, (item: MigratedListItem) => {
+          GridItem() { Image(item.imageUrl); Text(item.title) }
+        })
+      }
+    }
+  }
+}"""
+
+# A faithful LLM page that also has a list -> rich, NOT fallback (routes via @kit.ArkUI).
+LLM_RICH_LIST = """import { router } from '@kit.ArkUI';
+import { PostsDaoAdapter } from '../database/DaoAdapters';
+
+interface PostItem { id: number; title: string; }
+
+@Entry
+@Component
+export struct MainActivity {
+  @State posts: PostItem[] = [];
+  build() {
+    List() {
+      ForEach(this.posts, (p: PostItem) => { ListItem() { Text(p.title) } })
+    }
+  }
+}"""
+
+
+def test_template_fallback_is_flagged_and_not_faithful_rich(tmp_path: Path):
+    fb = classify_page(TEMPLATE_FALLBACK)
+    assert fb.fallback is True
+    assert fb.klass == "rich"  # structurally rich (Grid/ForEach) ...
+    good = classify_page(LLM_RICH_LIST)
+    assert good.fallback is False  # ... but a real LLM list page is not a fallback
+
+    pages = tmp_path / "entry" / "src" / "main" / "ets" / "pages"
+    pages.mkdir(parents=True)
+    (pages / "FragmentHome.ets").write_text(TEMPLATE_FALLBACK, encoding="utf-8")
+    (pages / "MainActivity.ets").write_text(LLM_RICH_LIST, encoding="utf-8")
+    report = project_page_metrics(tmp_path)
+    assert report["fallbackPages"] == 1
+    assert report["fallbackRatio"] == 0.5
+    # ...the fallback page is excluded from the faithful-rich ratio (1 of 2 real)
+    assert report["richRatio"] == 0.5
+
+
+def test_launcher_index_not_flagged_as_fallback():
+    # the Index launcher legitimately uses NavigationCompat.replace -> must NOT be a fallback
+    index = ("import { NavigationCompat } from '../common/NavigationCompat';\n"
+             "@Entry\n@Component\nstruct Index {\n"
+             "  aboutToAppear(): void { NavigationCompat.replace(this, { url: 'pages/MainActivity' }); }\n"
+             "  build() { Column() {} }\n}")
+    assert classify_page(index).fallback is False
+
+
 def test_project_metrics_aggregates(tmp_path: Path):
     pages = tmp_path / "entry" / "src" / "main" / "ets" / "pages"
     pages.mkdir(parents=True)
