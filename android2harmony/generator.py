@@ -153,7 +153,7 @@ def generate_harmony_project(
     db_adapter_names = _dao_adapter_names(project)  # exact DAO adapter class names for the page prompt
     db_entity_fields = _entity_field_summary(project)  # real entity columns so the LLM won't invent fields
     http_methods = _http_method_summary(project)  # real backend endpoints -> pages call the live API, not mock
-    http_base_url = _discover_retrofit_base_url(project) or ""
+    http_base_url = _effective_base_url(project) or ""
     # (route, page_name, source_kind, source_path)
     llm_jobs: list[tuple[str, str, str, Path]] = []
     placeholder_pages: list[str] = []  # routes with no Android source to migrate from
@@ -273,6 +273,9 @@ def generate_harmony_project(
     # instead of importing the real sibling page) with the real component, so embedded
     # screens render their actual content instead of a 'Main Content' placeholder.
     _inline_sibling_stub_structs(output_dir / "entry" / "src" / "main" / "ets" / "pages")
+    # Replace a page's LOCAL `class MigratedHttpClient`/`HttpParams` stub (which returns empty
+    # data and makes no request) with the real shared network client import.
+    _replace_local_httpclient_stub(output_dir / "entry" / "src" / "main" / "ets" / "pages")
     # Auto-wire imports for embedded sibling fragment components (hosts that render
     # FragmentXxx() inline often omit the import).
     wire_sibling_imports(output_dir / "entry" / "src" / "main" / "ets" / "pages")
@@ -1741,7 +1744,7 @@ def _domain_models_ets(project: AndroidProject) -> str:
 
 
 def _http_client_ets(project: AndroidProject) -> str:
-    real_base = _discover_retrofit_base_url(project)
+    real_base = _effective_base_url(project)
     base_url = real_base or "https://example.com/"
     # A real, discoverable backend -> hit it live by default so the transpiled client shows
     # actual server data, not fixtures. Only fall back to MockServer when there is no real
@@ -1765,6 +1768,39 @@ def _http_client_ets(project: AndroidProject) -> str:
   }"""
         )
     methods_text = "\n\n".join(method_blocks)
+    uses_auth = _uses_bearer_auth(project)
+    # Static token store + setter, mirroring the app's global token object (e.g. `Tokens`).
+    auth_class_members = (
+        "\n  // Bearer token set once at login (mirrors the app's OkHttp auth interceptor).\n"
+        "  static authToken: string = '';\n\n"
+        "  static setAuthToken(token: string): void {\n"
+        "    MigratedHttpClient.authToken = token ? token : '';\n"
+        "  }\n"
+    ) if uses_auth else ""
+    if uses_auth:
+        request_headers_block = (
+            "      const headers: Record<string, string> = {};\n"
+            "      headers['Accept'] = 'application/json';\n"
+            "      // Attach the Bearer token to every request so token-protected endpoints\n"
+            "      // (cart/order/...) are authorized, exactly like the app's interceptor.\n"
+            "      if (MigratedHttpClient.authToken.length > 0) {\n"
+            "        headers['Authorization'] = `Bearer ${MigratedHttpClient.authToken}`;\n"
+            "      }\n"
+            "      if (body !== undefined) {\n"
+            "        headers['Content-Type'] = 'application/json';\n"
+            "        requestOptions.extraData = JSON.stringify(body);\n"
+            "      }\n"
+            "      requestOptions.header = headers;\n"
+        )
+    else:
+        request_headers_block = (
+            "      if (body !== undefined) {\n"
+            "        const headers: Record<string, string> = {};\n"
+            "        headers['Content-Type'] = 'application/json';\n"
+            "        requestOptions.header = headers;\n"
+            "        requestOptions.extraData = JSON.stringify(body);\n"
+            "      }\n"
+        )
     return f"""import {{ http }} from '@kit.NetworkKit';
 import {{ MockServer }} from '../common/MockServer';
 
@@ -1803,7 +1839,7 @@ export class NetworkError extends Error {{
 
 export class MigratedHttpClient {{
   private readonly baseUrl: string = '{_escape(base_url)}';
-
+{auth_class_members}
 {methods_text}
 
   private buildUrl(path: string, params: HttpParams): string {{
@@ -1815,7 +1851,16 @@ export class MigratedHttpClient {{
       .filter((item: HttpParam) => !path.includes(`{{${{item.key}}}}`))
       .map((item: HttpParam) => `${{encodeURIComponent(item.key)}}=${{encodeURIComponent(String(item.value))}}`)
       .join('&');
-    return `${{this.baseUrl}}${{resolved}}${{query.length > 0 ? '?' + query : ''}}`;
+    // Join base + path the way Retrofit does: exactly one slash between them, never '//'.
+    // A baseUrl ending in '/' plus an endpoint path starting with '/' otherwise produced
+    // 'http://host//path', which strict backends 404. An already-absolute path is used as-is.
+    let full: string;
+    if (resolved.startsWith('http://') || resolved.startsWith('https://')) {{
+      full = resolved;
+    }} else {{
+      full = `${{this.baseUrl.replace(/\\/+$/, '')}}/${{resolved.replace(/^\\/+/, '')}}`;
+    }}
+    return `${{full}}${{query.length > 0 ? '?' + query : ''}}`;
   }}
 
   private async requestJson(url: string, method: http.RequestMethod, body?: Object): Promise<Object> {{
@@ -1831,22 +1876,24 @@ export class MigratedHttpClient {{
       const requestOptions: http.HttpRequestOptions = {{
         method: method
       }};
-      if (body !== undefined) {{
-        const headers: Record<string, string> = {{}};
-        headers['Content-Type'] = 'application/json';
-        requestOptions.header = headers;
-        requestOptions.extraData = JSON.stringify(body);
-      }}
-      const response = await request.request(url, requestOptions);
+{request_headers_block}      const response = await request.request(url, requestOptions);
       const statusCode = Number(response.responseCode || 0);
       if (statusCode >= 400) {{
         throw new NetworkError(url, `HTTP request failed with status ${{statusCode}}`, statusCode);
       }}
       if (typeof response.result === 'string') {{
+        const text = (response.result as string).trim();
+        if (text.length === 0) {{
+          // An empty 200 body is a common success signal for POST/DELETE (e.g. register).
+          // JSON.parse('') would throw, so treat it as an empty object instead of an error.
+          return {{}} as Object;
+        }}
         try {{
-          return JSON.parse(response.result) as Object;
+          return JSON.parse(text) as Object;
         }} catch (err) {{
-          throw new NetworkError(url, `HTTP response parse failed: ${{JSON.stringify(err)}}`, statusCode);
+          // A non-JSON body (e.g. a plain status string like 'not found') is handed back as-is
+          // so the calling screen can branch on it rather than crashing on a parse error.
+          return text as Object;
         }}
       }}
       return response.result as Object;
@@ -2590,13 +2637,67 @@ def _field_is_primary_key(text: str, field_name: str) -> bool:
 
 
 def _discover_retrofit_base_url(project: AndroidProject) -> str | None:
+    """Find the Retrofit base URL.
+
+    Handles three real-world shapes:
+      1. a string literal:        .baseUrl("https://api.example.com/")
+      2. a constant *reference*:  .baseUrl(FoodiumService.FOODIUM_API_URL)  where
+         `const val FOODIUM_API_URL = "https://..."` lives elsewhere (Foodium's pattern,
+         previously missed -> client fell back to MockServer);
+      3. no `.baseUrl(...)` at all but a clearly-named URL constant
+         (const val BASE_URL / API_URL / SERVER_URL = "https://...").
+    """
+    baseurl_literal: str | None = None
+    baseurl_ident: str | None = None
+    const_map: dict[str, str] = {}
     for module in project.modules:
         for src in module.source_files:
             text = src.read_text(encoding="utf-8", errors="ignore")
-            match = re.search(r"\.baseUrl\(\s*\"([^\"]+)\"", text)
-            if match:
-                return match.group(1)
+            if baseurl_literal is None:
+                lit = re.search(r"\.baseUrl\(\s*\"([^\"]+)\"", text)
+                if lit:
+                    baseurl_literal = lit.group(1)
+            if baseurl_ident is None:
+                ref = re.search(r"\.baseUrl\(\s*([A-Za-z_][\w.]*)\s*\)", text)
+                if ref:
+                    baseurl_ident = ref.group(1).split(".")[-1]
+            # Kotlin: (const) val NAME[: String] = "..."  /  Java: static final String NAME = "..."
+            for cm in re.finditer(r"\bval\s+([A-Za-z_]\w*)\s*(?::\s*String\s*)?=\s*\"([^\"]+)\"", text):
+                const_map.setdefault(cm.group(1), cm.group(2))
+            for cm in re.finditer(r"String\s+([A-Za-z_]\w*)\s*=\s*\"([^\"]+)\"", text):
+                const_map.setdefault(cm.group(1), cm.group(2))
+    if baseurl_literal:
+        return baseurl_literal
+    if baseurl_ident and const_map.get(baseurl_ident, "").startswith("http"):
+        return const_map[baseurl_ident]
+    for name, val in const_map.items():
+        if val.startswith("http") and re.search(r"BASE_?URL|API_?URL|SERVER|ENDPOINT|HOST", name, re.I):
+            return val
     return None
+
+
+def _effective_base_url(project: AndroidProject) -> str | None:
+    """The base URL the transpiled client should actually call. An explicit
+    `A2H_API_BASE_URL` override (CLI `--api-base-url`) wins, so a migration can repoint the
+    client at a self-hosted / staging backend without editing source; otherwise use the URL
+    discovered from the original Retrofit setup."""
+    override = os.environ.get("A2H_API_BASE_URL", "").strip()
+    if override:
+        return override
+    return _discover_retrofit_base_url(project)
+
+
+def _uses_bearer_auth(project: AndroidProject) -> bool:
+    """True when the app attaches an `Authorization: Bearer <token>` header (typically via an
+    OkHttp interceptor reading a saved access token). The migrated client must replicate this,
+    or every token-protected endpoint (cart, order, profile...) returns 401 after login."""
+    pattern = re.compile(r"[\"']Authorization[\"']\s*,\s*[\"'][^\"']*Bearer", re.I)
+    for module in project.modules:
+        for src in module.source_files:
+            text = src.read_text(encoding="utf-8", errors="ignore")
+            if pattern.search(text):
+                return True
+    return False
 
 
 def _discover_retrofit_methods(project: AndroidProject) -> list[dict[str, str]]:
@@ -2605,7 +2706,15 @@ def _discover_retrofit_methods(project: AndroidProject) -> list[dict[str, str]]:
     for module in project.modules:
         for src in module.source_files:
             text = src.read_text(encoding="utf-8", errors="ignore")
-            for match in re.finditer(r"@(GET|POST|PUT|DELETE|PATCH)\(\"([^\"]+)\"\)\s*suspend\s+fun\s+([A-Za-z0-9_]+)\s*\(", text, re.S):
+            # Match both Kotlin (`[suspend] fun name(`) and Java (`public Call<T> name(`) Retrofit
+            # methods, tolerating a space before the annotation paren (`@GET ("...")`). The method
+            # name is the identifier immediately before the parameter-list '(' that follows the
+            # annotation; `[^;{(]*?` skips modifiers + return type without crossing into the next member.
+            for match in re.finditer(
+                r"@(GET|POST|PUT|DELETE|PATCH)\s*\(\s*\"([^\"]+)\"\s*\)\s*[^;{(]*?\b([A-Za-z_]\w*)\s*\(",
+                text,
+                re.S,
+            ):
                 name = match.group(3)
                 if name in seen_names:
                     continue
@@ -2617,9 +2726,60 @@ def _discover_retrofit_methods(project: AndroidProject) -> list[dict[str, str]]:
                         "path": match.group(2),
                         "name": name,
                         "params": _retrofit_param_summary(params),
+                        "raw_params": params,
                     }
                 )
     return methods
+
+
+def _body_type_from_params(raw_params: str) -> str:
+    """The declared type of an @Body parameter, e.g. `Data` from Java `@Body Data data` or
+    `UserRequest` from Kotlin `@Body request: UserRequest`. '' when there is no @Body."""
+    for piece in _split_kotlin_params(raw_params):
+        if "@Body" not in piece:
+            continue
+        kotlin = re.search(r"@Body\b[^:]*:\s*([A-Za-z_][\w.]*)", piece)
+        if kotlin:
+            return kotlin.group(1).split(".")[-1]
+        java = re.search(r"@Body\s+(?:final\s+)?([A-Za-z_][\w.<>]*)\s+[A-Za-z_]\w*\s*$", piece.strip())
+        if java:
+            return java.group(1).split(".")[-1].split("<")[0]
+    return ""
+
+
+def _dto_fields(project: AndroidProject, type_name: str) -> list[str]:
+    """Field names of a request/response DTO class so a generated POST body uses the EXACT
+    server keys (e.g. `UserName`/`UserMail`), not the local variable names a screen happens to
+    use. Handles Kotlin data-class constructors / `val`-`var` and Java getters / field declarations."""
+    type_name = (type_name or "").strip().strip("?")
+    if not type_name or type_name in {
+        "String", "Int", "Integer", "Long", "Double", "Float", "Boolean", "Object", "Any",
+        "ResponseBody", "Unit", "void", "Map", "List", "ArrayList",
+    }:
+        return []
+    for module in project.modules:
+        for src in module.source_files:
+            text = src.read_text(encoding="utf-8", errors="ignore")
+            cm = re.search(r"\b(?:data\s+)?class\s+" + re.escape(type_name) + r"\b", text)
+            if not cm:
+                continue
+            fields: list[str] = []
+            brace = text.find("{", cm.end())
+            ctor_paren = text.find("(", cm.end())
+            if ctor_paren != -1 and (brace == -1 or ctor_paren < brace):  # Kotlin primary constructor
+                ctor = text[ctor_paren + 1 : _match_paren(text, ctor_paren)]
+                fields += [m.group(1) for m in re.finditer(r"\b(?:val|var)\s+([A-Za-z_]\w*)\s*:", ctor)]
+            body = text[brace + 1 : _match_brace(text, brace)] if brace != -1 else ""
+            fields += [m.group(1) for m in re.finditer(r"\b(?:val|var)\s+([A-Za-z_]\w*)\s*:", body)]
+            fields += [m.group(1) for m in re.finditer(r"\bget([A-Z]\w*)\s*\(\s*\)", body)]  # Java getters
+            if not fields:  # Java plain fields: `Type a, b, c;`
+                for fm in re.finditer(r"\b[A-Za-z_][\w<>]*\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*;", body):
+                    fields += [n.strip() for n in fm.group(1).split(",")]
+            seen: set[str] = set()
+            out = [f for f in fields if f and not (f in seen or seen.add(f))]
+            if out:
+                return out
+    return []
 
 
 def _http_method_summary(project: AndroidProject) -> str:
@@ -2631,6 +2791,10 @@ def _http_method_summary(project: AndroidProject) -> str:
         desc = f"{m['name']}() -> {m['verb']} {m['path']}"
         if m.get("params"):
             desc += f" (params: {m['params']})"
+        if "body:" in (m.get("params") or ""):
+            fields = _dto_fields(project, _body_type_from_params(m.get("raw_params", "")))
+            if fields:
+                desc += f" (body fields: {','.join(fields)})"
         parts.append(desc)
     return "; ".join(parts)
 
@@ -2656,16 +2820,20 @@ def _retrofit_param_summary(params: str) -> str:
         item = " ".join(raw.strip().split())
         if not item:
             continue
-        name_match = re.search(r"\b([A-Za-z0-9_]+)\s*:", item)
-        param_name = name_match.group(1) if name_match else ""
-        path_match = re.search(r"@Path\(\"([^\"]+)\"\)", item)
-        query_match = re.search(r"@Query\(\"([^\"]+)\"\)", item)
+        # Accept both @Path("x") and Java's @Path(value = "x", encoded = true).
+        path_match = re.search(r"@Path\(\s*(?:value\s*=\s*)?\"([^\"]+)\"", item)
+        query_match = re.search(r"@Query\(\s*(?:value\s*=\s*)?\"([^\"]+)\"", item)
         if path_match:
             parts.append(f"path:{path_match.group(1)}")
         elif query_match:
             parts.append(f"query:{query_match.group(1)}")
         elif "@Body" in item:
-            parts.append(f"body:{param_name or 'body'}")
+            # Kotlin declares `name: Type`; Java declares `Type name`. Prefer the Kotlin name,
+            # otherwise fall back to the trailing identifier (the Java parameter name).
+            kotlin_name = re.search(r"\b([A-Za-z0-9_]+)\s*:", item)
+            trailing = re.search(r"([A-Za-z0-9_]+)\s*$", item)
+            param_name = kotlin_name.group(1) if kotlin_name else (trailing.group(1) if trailing else "body")
+            parts.append(f"body:{param_name}")
     return ",".join(parts)
 
 
@@ -3068,6 +3236,45 @@ def _inline_sibling_stub_structs(pages_dir: Path) -> int:
                 if f"from './{n}'" not in text
             )
             p.write_text(header + text, encoding="utf-8")
+            fixed += 1
+    return fixed
+
+
+def _replace_local_httpclient_stub(pages_dir: Path) -> int:
+    """A page sometimes redefines its OWN local `class MigratedHttpClient` / `class HttpParams`
+    - typically a stub whose methods just `return [] as Object[]` - instead of importing the
+    shared network client. The screen then makes NO real request and renders empty data
+    (observed: NikeShop home showed no products). Excise any such local class and import the
+    real client from '../network/HttpClient'."""
+    if not pages_dir.exists():
+        return 0
+    targets = ("MigratedHttpClient", "HttpParams")
+    fixed = 0
+    for p in pages_dir.glob("*.ets"):
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        removed = False
+        for name in targets:
+            while True:
+                m = re.search(rf"\bclass\s+{re.escape(name)}\b", text)
+                if not m:
+                    break
+                brace = text.find("{", m.start())
+                if brace < 0:
+                    break
+                close = _match_brace(text, brace)
+                if close < 0:
+                    break
+                start = text.rfind("\n", 0, m.start()) + 1  # line start (covers a leading `export `)
+                end = close + 1
+                while end < len(text) and text[end] in "\r\n":
+                    end += 1
+                text = text[:start] + text[end:]
+                removed = True
+        if removed:
+            needed = [n for n in targets if re.search(rf"\b{n}\b", text)]
+            if needed and "from '../network/HttpClient'" not in text:
+                text = f"import {{ {', '.join(needed)} }} from '../network/HttpClient';\n" + text
+            p.write_text(text, encoding="utf-8")
             fixed += 1
     return fixed
 

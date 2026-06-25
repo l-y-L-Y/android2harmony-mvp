@@ -63,6 +63,12 @@ def analyze_project(root: Path) -> tuple[AndroidProject, list[MigrationIssue]]:
 
     if not module_names:
         module_names = _discover_modules(root)
+    if not module_names and _is_root_gradle_module(root):
+        # Single-module Gradle project where the module IS the repo root (root build.gradle
+        # + src/main/...), with no `app/` subdir and the manifest under src/main rather than
+        # at the root. `_discover_modules` skips the root gradle and `_looks_like_legacy_project`
+        # only checks for a root manifest, so such projects otherwise resolved to 0 modules.
+        module_names = [""]
     if not module_names and _looks_like_legacy_project(root):
         module_names = [""]
 
@@ -139,6 +145,13 @@ def _discover_modules(root: Path) -> list[str]:
 
 def _looks_like_legacy_project(root: Path) -> bool:
     return (root / "AndroidManifest.xml").exists() and ((root / "src").exists() or (root / "res").exists())
+
+
+def _is_root_gradle_module(root: Path) -> bool:
+    """A single-module Gradle project whose module is the repo root: a build.gradle at the
+    root plus the conventional src/main source set (manifest typically under src/main)."""
+    has_gradle = _first_existing(root, ["build.gradle.kts", "build.gradle"]) is not None
+    return has_gradle and (root / "src" / "main").exists()
 
 
 def _build_legacy_module(root: Path) -> AndroidModule:

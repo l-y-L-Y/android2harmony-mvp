@@ -6,6 +6,49 @@ from android2harmony.analyzer import analyze_project
 from android2harmony.generator import generate_harmony_project
 
 
+class RootGradleModuleTest(unittest.TestCase):
+    def test_single_module_project_with_module_at_repo_root(self):
+        # A Gradle project with no `app/` subdir: build.gradle at the root and the source set
+        # (incl. the manifest) under src/main. Previously resolved to 0 modules because
+        # _discover_modules skips the root gradle and legacy detection wants a root manifest.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build.gradle").write_text(
+                "apply plugin: 'com.android.application'\nandroid { namespace 'com.example.app' }\n",
+                encoding="utf-8",
+            )
+            main = root / "src" / "main"
+            (main / "java" / "com" / "example" / "app").mkdir(parents=True)
+            (main / "java" / "com" / "example" / "app" / "MainActivity.java").write_text(
+                "package com.example.app; public class MainActivity {}", encoding="utf-8"
+            )
+            (main / "AndroidManifest.xml").write_text(
+                """<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app">
+  <application android:label="App">
+    <activity android:name=".MainActivity">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>
+""",
+                encoding="utf-8",
+            )
+            (main / "res" / "layout").mkdir(parents=True)
+            (main / "res" / "layout" / "activity_main.xml").write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" />',
+                encoding="utf-8",
+            )
+
+            project, _ = analyze_project(root)
+            self.assertEqual(len(project.modules), 1)
+            self.assertEqual(project.modules[0].kind, "application")
+            self.assertGreaterEqual(len(project.modules[0].source_files), 1)
+
+
 class LegacyAndroidProjectTest(unittest.TestCase):
     def test_legacy_project_generates_clickable_routes(self):
         with tempfile.TemporaryDirectory() as tmp_in, tempfile.TemporaryDirectory() as tmp_out:

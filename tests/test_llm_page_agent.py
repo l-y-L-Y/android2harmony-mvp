@@ -252,13 +252,33 @@ def test_prompt_wires_backend_api_for_server_data():
     assert "fetchPokemonList()" in prompt
     assert "https://pokeapi.co/api/v2/" in prompt
     # detail screens must actually CALL the single-item endpoint, not leave stats at 0
-    assert "DETAIL/SINGLE-ITEM screen" in prompt
+    assert "DETAIL/SINGLE-ITEM / PROFILE screen" in prompt
     assert "base_stat" in prompt
+    # a profile/detail screen whose source calls an API must not be filled with mock placeholders
+    assert "INVENTING PLACEHOLDER DATA IS FORBIDDEN" in prompt
 
 
 def test_prompt_no_backend_clause_without_endpoints():
     prompt = build_page_prompt("Solo", "<x/>", "App")
     assert "BACKEND API" not in prompt
+
+
+def test_prompt_wires_post_body_as_second_argument():
+    # Regression (RetrofitApp Sign_up): the LLM stuffed the POST body into HttpParams and renamed
+    # the DTO fields -> the backend received no register data. The clause must mandate passing the
+    # body as the 2nd arg with the source's exact field names, and tolerate empty/string responses.
+    prompt = build_page_prompt(
+        "SignUp", "<x/>", "RetrofitApp",
+        http_methods="postAllData() -> POST api/data/ (params: body:data)",
+        http_base_url="http://10.0.2.2:3000/",
+    )
+    assert "WRITE/SUBMIT" in prompt
+    assert "SECOND argument" in prompt
+    assert "Do NOT put the JSON body inside HttpParams" in prompt
+    assert "NOT renamed or camelCased" in prompt
+    # after login, the token must be stored so later token-protected calls are authorized
+    assert "setAuthToken" in prompt
+    assert "access_token" in prompt
 
 
 def test_prompt_detail_page_requeries_db_by_id():

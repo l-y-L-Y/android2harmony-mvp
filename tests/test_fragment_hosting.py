@@ -49,5 +49,38 @@ class DiscoverRoutesNonStandardDirTest(unittest.TestCase):
             self.assertNotIn("pages/FragmentContent", routes)  # include_* is not a screen
 
 
+class DiscoverRoutesDeadActivityTest(unittest.TestCase):
+    def test_manifest_activity_without_layout_or_source_is_skipped(self):
+        # A <activity> declared in the manifest but with NEITHER a layout NOR a backing class
+        # (e.g. a template-leftover `.ui.login.LoginActivity`) must NOT become a route, or other
+        # screens navigate to its "no layout" placeholder instead of the real login page.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            main = root / "src" / "main"
+            (main / "java" / "com" / "example").mkdir(parents=True)
+            (main / "java" / "com" / "example" / "Login_in.java").write_text(
+                "package com.example; public class Login_in {}", encoding="utf-8"
+            )
+            manifest = main / "AndroidManifest.xml"
+            manifest.write_text(
+                """<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+  <application>
+    <activity android:name=".Login_in" />
+    <activity android:name=".ui.login.LoginActivity" />
+  </application>
+</manifest>
+""",
+                encoding="utf-8",
+            )
+            module = AndroidModule(
+                name="app", path=main, kind="application", manifest=manifest,
+                source_files=[main / "java" / "com" / "example" / "Login_in.java"],
+            )
+            routes = _discover_routes(module)
+            self.assertIn("pages/LoginIn", routes)          # backed by Login_in.java -> kept
+            self.assertNotIn("pages/LoginActivity", routes)  # dead declaration -> dropped
+
+
 if __name__ == "__main__":
     unittest.main()

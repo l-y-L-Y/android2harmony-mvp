@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from android2harmony.generator import _repair_navigation_targets, _inline_sibling_stub_structs
+from android2harmony.generator import (
+    _repair_navigation_targets,
+    _inline_sibling_stub_structs,
+    _replace_local_httpclient_stub,
+)
 
 
 def _pages(tmp_path: Path) -> Path:
@@ -98,3 +102,50 @@ def test_valid_navigation_is_untouched(tmp_path: Path):
     n = _repair_navigation_targets(pages)
     assert n == 0
     assert (pages / "Home.ets").read_text(encoding="utf-8") == src  # unchanged
+
+
+def test_local_httpclient_stub_replaced_with_real_import(tmp_path: Path):
+    # Regression (NikeShop FragmentHome): the page redefined a LOCAL `class MigratedHttpClient`
+    # whose methods returned [] -> the screen made no request and showed no products. The local
+    # stub must be excised and the real shared client imported.
+    pages = _pages(tmp_path)
+    src = (
+        "import router from '@ohos.router'\n\n"
+        "class MigratedHttpClient {\n"
+        "  async getProducts(params: HttpParams): Promise<Object[]> {\n"
+        "    return [] as Object[]\n"
+        "  }\n"
+        "}\n\n"
+        "class HttpParams {\n"
+        "  set(key: string, value: string): void {}\n"
+        "}\n\n"
+        "@Entry\n@Component\nstruct FragmentHome {\n"
+        "  private http: MigratedHttpClient = new MigratedHttpClient()\n"
+        "  build() { Column() {} }\n"
+        "}\n"
+    )
+    (pages / "FragmentHome.ets").write_text(src, encoding="utf-8")
+    n = _replace_local_httpclient_stub(pages)
+    assert n == 1
+    out = (pages / "FragmentHome.ets").read_text(encoding="utf-8")
+    assert "class MigratedHttpClient {" not in out
+    assert "class HttpParams {" not in out
+    # the real client is imported (only names still referenced after the stub is removed)
+    assert "import { MigratedHttpClient" in out
+    assert "from '../network/HttpClient';" in out
+    assert "new MigratedHttpClient()" in out  # usage preserved
+
+
+def test_page_without_local_httpclient_stub_is_untouched(tmp_path: Path):
+    pages = _pages(tmp_path)
+    src = (
+        "import { MigratedHttpClient, HttpParams } from '../network/HttpClient';\n\n"
+        "@Entry\n@Component\nstruct P {\n"
+        "  private http: MigratedHttpClient = new MigratedHttpClient()\n"
+        "  build() { Column() {} }\n"
+        "}\n"
+    )
+    (pages / "P.ets").write_text(src, encoding="utf-8")
+    n = _replace_local_httpclient_stub(pages)
+    assert n == 0
+    assert (pages / "P.ets").read_text(encoding="utf-8") == src

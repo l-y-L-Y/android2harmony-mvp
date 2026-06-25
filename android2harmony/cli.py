@@ -52,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--llm-all-agents", action="store_true", help="Prefer the configured LLM for every migration agent, falling back to rules when validation fails.")
     convert.add_argument("--llm-max-pages", type=int, default=0, help="Maximum number of pages to refine with LLM. 0 means no limit.")
     convert.add_argument("--uitrans-index", type=Path, default=Path("rules/uitrans-index.json"), help="Path to indexed UITrans rule summary.")
+    convert.add_argument("--api-base-url", default="", help="Override the backend base URL the transpiled client calls (e.g. http://10.0.2.2:3000/ for a self-hosted backend reachable from the emulator). Overrides the URL discovered from the original Retrofit setup.")
 
     repair_build_p = sub.add_parser("repair-build", help="Build with hvigor and LLM-repair ArkTS compile errors until it passes.")
     repair_build_p.add_argument("project", type=Path)
@@ -284,6 +285,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"- {issue.severity} {issue.category}: {issue.message}")
             return 0
 
+        if getattr(args, "api_base_url", ""):
+            os.environ["A2H_API_BASE_URL"] = args.api_base_url
+            print(f"Backend base URL overridden -> {args.api_base_url}")
         llm_options = LLMRefineOptions(
             enabled=args.llm_refine_pages or args.llm_all_agents,
             all_agents=args.llm_all_agents,

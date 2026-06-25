@@ -258,14 +258,21 @@ def _discover_routes(module: AndroidModule | None) -> list[str]:
     seen = {route.lower() for route in routes}
     from .xml_layout_translator import page_to_layout_file, _module_layout_dirs
     claimed_layouts: set[str] = set()
+    from .screen_source import find_screen_source
     if module.manifest and module.manifest.exists():
         for page in _discover_manifest_routes(module.manifest):
             route = f"pages/{page}"
             key = route.lower()
             if key not in seen:
+                claimed = page_to_layout_file(module.path, route)
+                # A manifest <activity> that has NEITHER a layout NOR backing source is a dead
+                # declaration (template/library leftover, e.g. a generated `.ui.login.LoginActivity`
+                # with no class). Routing it only yields a "no layout" placeholder that other
+                # screens then navigate to instead of the real page. Skip it.
+                if not claimed and not find_screen_source(module, page).strip():
+                    continue
                 routes.append(route)
                 seen.add(key)
-                claimed = page_to_layout_file(module.path, route)
                 if claimed:
                     claimed_layouts.add(claimed.stem.lower())
     # Scan every layout dir (incl. custom resource roots like res/home/layout) so the
