@@ -1811,8 +1811,12 @@ export class NetworkConfig {{
 export class HttpParams {{
   items: HttpParam[] = [];
 
-  set(key: string, value: string | number): void {{
+  // Returns `this` so calls chain (`new HttpParams().set('sort', 'newest')`) and compile.
+  // Previously `set` returned void, so a chained construction was a type error that the build
+  // repair "fixed" by replacing the whole network call with hardcoded sample data.
+  set(key: string, value: string | number): HttpParams {{
     this.items.push(new HttpParam(key, value));
+    return this;
   }}
 }}
 

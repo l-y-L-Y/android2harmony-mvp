@@ -341,6 +341,22 @@ interface ApiService {
             self.assertIn("static setAuthToken(token: string)", client)
             self.assertIn("headers['Authorization'] = `Bearer ${MigratedHttpClient.authToken}`", client)
 
+    def test_http_params_set_is_chainable(self):
+        # `new HttpParams().set('sort', 'newest')` must compile: if set returned void the build
+        # repair "fixed" the type error by replacing the whole network call with hardcoded samples.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            api = root / "app" / "src" / "main" / "java" / "Api.kt"
+            api.parent.mkdir(parents=True)
+            api.write_text(
+                "interface Api {\n  @GET(\"product/list\")\n  fun getProducts(@Query(\"sort\") s: String): Single<List<Product>>\n}\n",
+                encoding="utf-8",
+            )
+            project = self._project_at(root, [api])
+            client = _http_client_ets(project)
+            self.assertIn("set(key: string, value: string | number): HttpParams", client)
+            self.assertIn("return this;", client)
+
     def test_no_auth_app_has_no_bearer_plumbing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
